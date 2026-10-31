@@ -2,10 +2,11 @@
 % Scans input directory hierarchy: mp3/{trial_folder}/{id}.mp3
 % Outputs analysis plots to: analyze/{trial_folder}/{id}/
 %
-% Generates 3 raw acoustic plots per audio file:
+% Generates 4 acoustic plots per audio file:
 % 1. Amplitude vs Time (amplitude.svg / .fig)
 % 2. Frequency Spectrum (frequency.svg / .fig)
 % 3. Spectrogram (spectrogram.svg / .fig)
+% 4. Amplitude vs Dimensionless Distance (amplitude-distance.svg / .fig)
 
 clear; clc;
 
@@ -13,13 +14,21 @@ clear; clc;
 INPUT_ROOT  = 'mp3';
 OUTPUT_ROOT = 'analyze';
 
-% Time & Frequency Windowing
-TIME_RANGE  = [];    % [] for full file duration (10-20s)
-MAX_AMP     = [];    % Max amplitude limit (empty = auto-scale)
-MAX_FREQ    = 3000;  % Focus display on acoustic experiment band (0 to 3000 Hz)
+% Pipe Duct Geometry & Reflectometry Settings
+MODEL_LENGTH    = 2.0;   % Pipe length in meters (L)
+PIPE_DIAMETER   = 0.15;  % Model pipe diameter (150 mm = 0.15 m)
+SOUND_SPEED     = 346.0; % Speed of sound in air at ~25 C (m/s)
+ENABLE_DISTANCE = true;  % Export amplitude-distance plot
+KNOWN_BLOCKAGE  = 0.40;  % Known blockage position in x/L (empty [] or NaN if unplaced)
 
-% Spectrogram Windowing for 10-20s Stepped Frequency Recordings
-WINDOW_LEN  = 1024;  % Gives sharp frequency bins for discrete tone steps
+% Acoustic Cut-off & Frequency Bounds
+% Cut-off for 150mm circular pipe: f_c = 0.586 * v / D ~ 1352 Hz
+MAX_FREQ    = 1500;  % Display through 1500 Hz to show cut-off boundary at ~1352 Hz
+TIME_RANGE  = [];    % [] for full file duration
+MAX_AMP     = [];    % Max amplitude limit (empty = auto-scale)
+
+% Spectrogram Windowing for Discrete Tone Steps
+WINDOW_LEN  = 1024;  
 OVERLAP_LEN = 512;   
 SAVE_FORMAT = 'svg'; % Image export format ('svg', 'png', etc.)
 SAVE_FIG    = true;  % Save interactive MATLAB .fig file (enables zoom/pan in MATLAB)
@@ -51,7 +60,12 @@ analyzer = AudioAnalyzer('', ...
     'OverlapLength', OVERLAP_LEN, ...
     'SaveFormat', SAVE_FORMAT, ...
     'SaveFig', SAVE_FIG, ...
-    'VisibleFigures', SHOW_PLOTS);
+    'VisibleFigures', SHOW_PLOTS, ...
+    'ModelLength', MODEL_LENGTH, ...
+    'PipeDiameter', PIPE_DIAMETER, ...
+    'SoundSpeed', SOUND_SPEED, ...
+    'EnableDistance', ENABLE_DISTANCE, ...
+    'KnownBlockage', KNOWN_BLOCKAGE);
 
 totalFilesProcessed = 0;
 
@@ -83,17 +97,19 @@ for t = 1:length(trialDirs)
             totalFilesProcessed = totalFilesProcessed + 1;
             
             % Generate 1-click MATLAB hyperlinks for Command Window
-            ampFig  = fullfile(targetDir, 'amplitude.fig');
-            freqFig = fullfile(targetDir, 'frequency.fig');
-            specFig = fullfile(targetDir, 'spectrogram.fig');
+            ampFig     = fullfile(targetDir, 'amplitude.fig');
+            freqFig    = fullfile(targetDir, 'frequency.fig');
+            specFig    = fullfile(targetDir, 'spectrogram.fig');
+            ampDistFig = fullfile(targetDir, 'amplitude-distance.fig');
 
             linkAmp  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude]</a>', strrep(ampFig, '\', '/'));
             linkFreq = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency]</a>', strrep(freqFig, '\', '/'));
             linkSpec = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram]</a>', strrep(specFig, '\', '/'));
+            linkDist = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amp-Dist]</a>', strrep(ampDistFig, '\', '/'));
             linkDir  = sprintf('<a href="matlab:winopen(''%s'');">[Open Folder]</a>', strrep(targetDir, '\', '/'));
 
-            fprintf('  [OK] %-8s -> 1-Click: %s %s %s | %s\n', ...
-                fileName, linkAmp, linkFreq, linkSpec, linkDir);
+            fprintf('  [OK] %-8s -> 1-Click: %s %s %s %s | %s\n', ...
+                fileName, linkAmp, linkFreq, linkSpec, linkDist, linkDir);
 
         catch ME
             fprintf(2, '  [ERROR] Failed to process %s: %s\n', fileName, ME.message);
