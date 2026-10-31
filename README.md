@@ -156,37 +156,68 @@ Testing at 300–1300 Hz in a 2.0-meter model directly represents the 50–216 H
 
 ---
 
-## Benchmark Signal Generation Formulations
+## How the Benchmark Audio is Generated (`generate_dummy_data.m`)
 
-The benchmark synthesis script (`generate_dummy_data.m`) models the physical acoustic wave propagation in the pipe using the following equations:
+The script synthesizes an 11-step `Step -> Stop -> Step -> Stop` acoustic experiment (300 Hz to 1300 Hz in 100 Hz steps) inside a 2-meter pipe ($L = 2.0\text{ m}$, $v = 346\text{ m/s}$).
 
-### 1. Incident Pulse Packet Generation
-At the start of each frequency step $f_k$, a compact 2-cycle tone packet is synthesized with a Hann window:
-$$s_{\text{pulse}}(t) = A_0 \sin(2\pi f_k t) \cdot \frac{1}{2}\left(1 - \cos\left(2\pi \frac{t}{T_{\text{pulse}}}\right)\right), \quad 0 \le t \le T_{\text{pulse}} = \frac{2}{f_k}$$
+Each frequency step runs for a **1.0-second total cycle**, broken into three distinct physical phases:
 
-### 2. Time-of-Flight Reflected Echoes
-The transient sound field recorded by the microphone during the round-trip transit window ($0 \le t \le 1.15 \cdot T_{\text{pipe}}$) is modeled as the linear superposition of the direct wave and delayed reflections:
-$$s_{\text{transit}}(t) = s_{\text{direct}}(t) + s_{\text{blockage}}(t) + s_{\text{end}}(t)$$
-where:
-- **Direct wave at entrance ($x=0$)**: $s_{\text{direct}}(t) = s_{\text{pulse}}(t)$
-- **Blockage echo from $x_{\text{blockage}}$**: 
-  $$s_{\text{blockage}}(t) = R_{\text{block}} \cdot s_{\text{pulse}}\left(t - \frac{2 x_{\text{blockage}}}{v}\right)$$
-  with reflection coefficient $R_{\text{block}} > 0$.
-- **Pipe end reflection from $L$**: 
-  $$s_{\text{end}}(t) = R_{\text{end}} \cdot s_{\text{pulse}}\left(t - \frac{2L}{v}\right)$$
-  with open-end reflection coefficient $R_{\text{end}} \approx -0.55$ (phase inversion).
+```text
+|<--------------------------- 1.0 Second Cycle --------------------------->|
+|-- 0 to 15 ms --|---------- 15 ms to 800 ms ----------|-- 800 to 1000 ms --|
+  Leading Edge              Steady-State Tone                 Silence Gap
+(Reflectometry)            (Resonance & FFT)              (Decay & Reset)
+```
 
-### 3. Steady-State Acoustic Resonance Gain
-After multiple wall bounces ($t > 15\text{ ms}$), the sound field transitions into steady-state standing-wave resonance. At acoustic wavenumber $k = \frac{2\pi f_k}{v}$:
-- **Clean Pipe Cavity Gain**:
-  $$G_{\text{clean}}(f) = \frac{1}{\left|\sin(kL)\right| + \alpha}$$
+---
+
+### Phase 1: Leading-Edge Pulse Transit (0 to 15 ms)
+This phase models the initial travel of the sound down the pipe *before* standing waves develop, producing the clean reflection echoes used for distance plotting:
+
+1. **Direct Wave Packet (Incident Sound at $x = 0$)**:
+   The speaker fires an instant 2-cycle tone burst shaped by a Hann smoothing window:
+   $$s_{\text{pulse}}(t) = 0.85 \sin(2\pi f_k t) \cdot \frac{1}{2}\left(1 - \cos\left(2\pi \frac{t}{T_{\text{pulse}}}\right)\right), \quad 0 \le t \le T_{\text{pulse}} = \frac{2}{f_k}$$
+
+2. **Blockage Reflection Echo (Arrives at $t_{\text{block}}$)**:
+   Sound travels to the blockage ($x_{\text{block}} = 0.8\text{ m}$) and reflects back to the microphone at round-trip time delay:
+   $$t_{\text{block}} = \frac{2 \cdot x_{\text{block}}}{v} = \frac{2 \times 0.8\text{ m}}{346\text{ m/s}} = 4.62\text{ ms}$$
+   The reflected wave packet is added with positive reflection amplitude:
+   $$s_{\text{block}}(t) = +0.42 \cdot s_{\text{pulse}}(t - 4.62\text{ ms})$$
+
+3. **Open Pipe End Reflection Echo (Arrives at $t_{\text{end}}$)**:
+   Sound travels to the far end of the pipe ($L = 2.0\text{ m}$) and reflects back at round-trip time delay:
+   $$t_{\text{end}} = \frac{2 \cdot L}{v} = \frac{2 \times 2.0\text{ m}}{346\text{ m/s}} = 11.56\text{ ms}$$
+   Because an open pipe end creates acoustic pressure release, the reflected pulse is phase-inverted (negative):
+   $$s_{\text{end}}(t) = -0.25 \cdot s_{\text{pulse}}(t - 11.56\text{ ms})$$
+   *(In a clean pipe with no blockage, the end reflection is unattenuated at $-0.55$).*
+
+---
+
+### Phase 2: Steady-State Standing Wave (15 ms to 800 ms)
+After 15 ms, sound waves have bounced back and forth multiple times, transitioning into a continuous acoustic standing wave. This continuous wave provides the data for the **Frequency Spectrum (FFT)** and **Spectrogram**:
+
+- **Acoustic Wave Number**: $k = \frac{2\pi f_k}{v}$
+- **Clean Pipe Standing-Wave Gain**:
+  $$G_{\text{clean}}(f) = \frac{1}{|\sin(kL)| + 0.4}$$
 - **Blocked Pipe Coupled-Cavity Gain**:
-  $$G_{\text{blocked}}(f) = \frac{1}{\left|\sin(k x_{\text{blockage}}) + \beta \cos(k (L - x_{\text{blockage}}))\right| + \alpha}$$
-  where $\alpha$ is the radiation/viscous damping factor and $\beta$ represents the impedance mismatch across the constriction.
+  The physical blockage constricts the pipe cross-section at $x_{\text{block}}$, dividing the pipe into two coupled acoustic chambers. This shifts the natural resonance frequencies and attenuates sound:
+  $$G_{\text{blocked}}(f) = \frac{1}{\left|\sin(k x_{\text{block}}) + 0.5 \cos(k(L - x_{\text{block}}))\right| + 0.4}$$
 
-### 4. Transient-to-Steady-State Blending
-The full tone signal is synthesized by blending the leading-edge transit packet into the steady-state standing wave via a smooth transition weight $w(t)$:
-$$s(t) = \left(1 - w(t)\right) \cdot s_{\text{transit}}(t) + w(t) \cdot \left[A_s G(f_k) \sin(2\pi f_k t)\right]$$
+The steady-state continuous tone is synthesized as:
+$$s_{\text{steady}}(t) = 0.35 \cdot \left(\frac{G(f_k)}{2.5}\right) \cdot \sin(2\pi f_k t)$$
+
+---
+
+### Phase 3: Silence Gap (800 ms to 1000 ms)
+The sound is set to zero for 200 ms ($0.2\text{ s}$):
+$$s(t) = 0, \quad 800\text{ ms} \le t \le 1000\text{ ms}$$
+This quiet window allows pipe reverberation to decay completely so the next frequency step starts with a clean zero baseline and a crisp, detectable onset ($t_0$).
+
+---
+
+### Background Noise Floor
+Finally, realistic low-level ambient room/microphone noise is added across the recording:
+$$s_{\text{final}}(t) = s(t) + 0.002 \cdot \mathcal{N}(0, 1)$$
 
 ---
 
