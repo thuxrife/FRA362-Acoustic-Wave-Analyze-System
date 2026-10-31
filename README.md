@@ -156,6 +156,40 @@ Testing at 300–1300 Hz in a 2.0-meter model directly represents the 50–216 H
 
 ---
 
+## Benchmark Signal Generation Formulations
+
+The benchmark synthesis script (`generate_dummy_data.m`) models the physical acoustic wave propagation in the pipe using the following equations:
+
+### 1. Incident Pulse Packet Generation
+At the start of each frequency step $f_k$, a compact 2-cycle tone packet is synthesized with a Hann window:
+$$s_{\text{pulse}}(t) = A_0 \sin(2\pi f_k t) \cdot \frac{1}{2}\left(1 - \cos\left(2\pi \frac{t}{T_{\text{pulse}}}\right)\right), \quad 0 \le t \le T_{\text{pulse}} = \frac{2}{f_k}$$
+
+### 2. Time-of-Flight Reflected Echoes
+The transient sound field recorded by the microphone during the round-trip transit window ($0 \le t \le 1.15 \cdot T_{\text{pipe}}$) is modeled as the linear superposition of the direct wave and delayed reflections:
+$$s_{\text{transit}}(t) = s_{\text{direct}}(t) + s_{\text{blockage}}(t) + s_{\text{end}}(t)$$
+where:
+- **Direct wave at entrance ($x=0$)**: $s_{\text{direct}}(t) = s_{\text{pulse}}(t)$
+- **Blockage echo from $x_{\text{blockage}}$**: 
+  $$s_{\text{blockage}}(t) = R_{\text{block}} \cdot s_{\text{pulse}}\left(t - \frac{2 x_{\text{blockage}}}{v}\right)$$
+  with reflection coefficient $R_{\text{block}} > 0$.
+- **Pipe end reflection from $L$**: 
+  $$s_{\text{end}}(t) = R_{\text{end}} \cdot s_{\text{pulse}}\left(t - \frac{2L}{v}\right)$$
+  with open-end reflection coefficient $R_{\text{end}} \approx -0.55$ (phase inversion).
+
+### 3. Steady-State Acoustic Resonance Gain
+After multiple wall bounces ($t > 15\text{ ms}$), the sound field transitions into steady-state standing-wave resonance. At acoustic wavenumber $k = \frac{2\pi f_k}{v}$:
+- **Clean Pipe Cavity Gain**:
+  $$G_{\text{clean}}(f) = \frac{1}{\left|\sin(kL)\right| + \alpha}$$
+- **Blocked Pipe Coupled-Cavity Gain**:
+  $$G_{\text{blocked}}(f) = \frac{1}{\left|\sin(k x_{\text{blockage}}) + \beta \cos(k (L - x_{\text{blockage}}))\right| + \alpha}$$
+  where $\alpha$ is the radiation/viscous damping factor and $\beta$ represents the impedance mismatch across the constriction.
+
+### 4. Transient-to-Steady-State Blending
+The full tone signal is synthesized by blending the leading-edge transit packet into the steady-state standing wave via a smooth transition weight $w(t)$:
+$$s(t) = \left(1 - w(t)\right) \cdot s_{\text{transit}}(t) + w(t) \cdot \left[A_s G(f_k) \sin(2\pi f_k t)\right]$$
+
+---
+
 ## Programmatic OOP Usage
 
 `AudioAnalyzer.m` can also be integrated into custom MATLAB scripts independently:
