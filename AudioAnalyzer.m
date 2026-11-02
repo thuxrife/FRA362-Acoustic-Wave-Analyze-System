@@ -31,7 +31,7 @@ classdef AudioAnalyzer < handle
 
         % Acoustic duct & dimensionless distance parameters
         ModelLength (1, 1) double = 2.0   % Pipe length in meters
-        PipeDiameter (1, 1) double = 0.15 % Pipe diameter in meters (for cut-off limit)
+        PipeDiameter (1, 1) double = 0.10 % Pipe diameter in meters (100 mm = 0.10 m for ~2028 Hz cut-off)
         SoundSpeed (1, 1) double = 346.0  % Speed of sound in m/s
         EnableDistance (1, 1) logical = true % Export amplitude-distance plot
         KnownBlockage (1, 1) double = NaN % Dimensionless position of known blockage (e.g. 0.40)
@@ -234,8 +234,8 @@ classdef AudioAnalyzer < handle
             diffAbove = [0; diff(isAbove)];
             risingEdges = find(diffAbove == 1);
             
-            % Enforce minimum separation of 0.3s between step onsets
-            minSamples = round(0.3 * fs);
+            % Enforce minimum separation of 0.8s between step onsets
+            minSamples = round(0.8 * fs);
             stepOnsets = [];
             for idx = risingEdges'
                 if isempty(stepOnsets) || (idx - stepOnsets(end) >= minSamples)

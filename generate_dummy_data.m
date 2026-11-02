@@ -1,26 +1,26 @@
 %% Generate Realistic Step-Stop-Step Acoustic Benchmarks
-% Simulates an 11-step stepped-frequency experiment in a 2-meter pipe:
+% Simulates a stepped-frequency experiment in a 2-meter pipe (100 mm diameter):
 % Based on Bin Ali, Horoshenkov, & Tait (2011) - Water Science & Technology
 %
-% Structure per step (1.0s total cycle):
+% Structure per step (3.0s total cycle):
 % 1. Leading-Edge Transit Window (0 to 15 ms):
 %    - Direct pulse packet (2 cycles at fCurrent) at x_bar = 0
 %    - Quiet baseline along unobstructed pipe
 %    - Blockage reflection wave packet at x_bar = 0.40 (x = 0.8m)
 %    - Pipe end reflection wave packet at x_bar = 1.0 (x = 2.0m)
-% 2. Steady-State Tone Body (15 ms to 800 ms):
+% 2. Steady-State Tone Body (15 ms to 2000 ms):
 %    - Continuous multi-cycle standing wave for FFT spectrum & spectrogram
-% 3. Silence Gap (800 ms to 1000 ms):
-%    - 200 ms quiet gap allowing reverberations to decay before next step
+% 3. Silence Gap (2000 ms to 3000 ms):
+%    - 1000 ms quiet gap allowing reverberations to decay before next step
 
 clear; clc;
 
 fs = 44100;
-freqSteps = 300:100:1300;           % 11 frequency steps below 1352 Hz cut-off
+freqSteps = 300:100:1900;           % Steps below the 2028 Hz cut-off (100mm pipe)
 numSteps = length(freqSteps);
-toneDuration = 0.8;                 % 0.8s tone
-gapDuration  = 0.2;                 % 0.2s silence
-stepCycle    = toneDuration + gapDuration; % 1.0s total cycle
+toneDuration = 2.0;                 % 2.0s tone
+gapDuration  = 1.0;                 % 1.0s silence gap
+stepCycle    = toneDuration + gapDuration; % 3.0s total cycle
 totalDuration = numSteps * stepCycle;
 t = 0:(1/fs):(totalDuration - 1/fs);
 N = length(t);
@@ -76,7 +76,7 @@ for k = 1:numSteps
 end
 sigClean = sigClean + 0.002 * randn(1, N);
 audiowrite(fullfile(dirClean, '1.wav'), sigClean, fs);
-fprintf('[Created] Clean Pipe: %s (11 steps, 300-1300 Hz)\n', fullfile(dirClean, '1.wav'));
+fprintf('[Created] Clean Pipe: %s (%d steps, 300-1900 Hz, 100mm pipe)\n', fullfile(dirClean, '1.wav'), numSteps);
 
 %% 2. Synthesize Blocked Pipe Response (Blockage at x = 0.8m, x_bar = 0.40)
 dirBlocked = fullfile('mp3', '2026-31-10-step-blocked');
@@ -129,6 +129,6 @@ for k = 1:numSteps
 end
 sigBlocked = sigBlocked + 0.002 * randn(1, N);
 audiowrite(fullfile(dirBlocked, '1.wav'), sigBlocked, fs);
-fprintf('[Created] Blocked Pipe (x_bar=0.40): %s (11 steps, 300-1300 Hz)\n', fullfile(dirBlocked, '1.wav'));
+fprintf('[Created] Blocked Pipe (x_bar=0.40): %s (%d steps, 300-1900 Hz, 100mm pipe)\n', fullfile(dirBlocked, '1.wav'), numSteps);
 
 fprintf('\nDone! Step-Stop-Step acoustic datasets generated.\n');

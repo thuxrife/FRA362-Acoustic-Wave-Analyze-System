@@ -16,14 +16,14 @@ OUTPUT_ROOT = 'analyze';
 
 % Pipe Duct Geometry & Reflectometry Settings
 MODEL_LENGTH    = 2.0;   % Pipe length in meters (L)
-PIPE_DIAMETER   = 0.15;  % Model pipe diameter (150 mm = 0.15 m)
+PIPE_DIAMETER   = 0.10;  % Model pipe diameter (100 mm = 0.10 m)
 SOUND_SPEED     = 346.0; % Speed of sound in air at ~25 C (m/s)
 ENABLE_DISTANCE = true;  % Export amplitude-distance plot
 KNOWN_BLOCKAGE  = 0.40;  % Known blockage position in x/L (empty [] or NaN if unplaced)
 
 % Acoustic Cut-off & Frequency Bounds
-% Cut-off for 150mm circular pipe: f_c = 0.586 * v / D ~ 1352 Hz
-MAX_FREQ    = 1500;  % Display through 1500 Hz to show cut-off boundary at ~1352 Hz
+% Cut-off for 100mm circular pipe: f_c = 0.586 * v / D ~ 2028 Hz
+MAX_FREQ    = 2200;  % Display through 2200 Hz to show cut-off boundary at ~2028 Hz
 TIME_RANGE  = [];    % [] for full file duration
 MAX_AMP     = [];    % Max amplitude limit (empty = auto-scale)
 

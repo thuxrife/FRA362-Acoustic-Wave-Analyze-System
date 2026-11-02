@@ -25,7 +25,10 @@ Place audio recordings in the `mp3` folder organized by trial directories. The s
 
 ```text
 FRA362-Acoustic-Wave-Analyze-System/
-├── mp3/
+├── sound_input/                         <-- Pure speaker excitation tracks
+│   └── stepped_tones_100mm_2s_1s.wav   <-- Noise-free playback file for experiments
+│
+├── mp3/                                 <-- Recorded microphone audio from experiments
 │   ├── 2026-31-10-trial-a/
 │   │   ├── 1.mp3 (or .wav)
 │   │   └── 2.mp3
@@ -45,6 +48,8 @@ FRA362-Acoustic-Wave-Analyze-System/
 │       └── ...
 │
 ├── AudioAnalyzer.m                      <-- Object-Oriented acoustic analysis class
+├── generate_sound_input.m               <-- Pure speaker excitation audio generator
+├── generate_dummy_data.m                <-- Benchmark acoustic simulation script
 ├── main.m                               <-- Batch orchestration script
 └── README.md
 ```
@@ -123,9 +128,9 @@ The analysis pipeline applies the following acoustic formulations:
 ### 1. Acoustic Waveguide Cut-Off Frequency ($f_c$)
 Ensures sound propagates purely as a one-dimensional **plane wave (Mode 0,0)** without higher-order cross-mode diagonal wall reflections or phase dispersion:
 $$f_c \approx 0.586 \cdot \frac{v}{D}$$
-For a laboratory pipe with diameter $D = 0.15\text{ m}$ (150 mm) and speed of sound $v = 346\text{ m/s}$:
-$$f_c \approx 0.586 \times \frac{346}{0.15} \approx 1352\text{ Hz}$$
-All discrete excitation tones are kept strictly below this frequency.
+For a laboratory pipe with diameter $D = 0.10\text{ m}$ (100 mm) and speed of sound $v = 346\text{ m/s}$:
+$$f_c \approx 0.586 \times \frac{346}{0.10} \approx 2028\text{ Hz}$$
+All discrete excitation tones are kept strictly below 2000 Hz.
 
 ### 2. Characteristic Pipe Round-Trip Transit Time ($T_{\text{pipe}}$)
 The time required for an acoustic wave to travel from the entrance to the pipe end ($L$) and return to the microphone:
@@ -158,13 +163,13 @@ Testing at 300–1300 Hz in a 2.0-meter model directly represents the 50–216 H
 
 ## How the Benchmark Audio is Generated (`generate_dummy_data.m`)
 
-The script synthesizes an 11-step `Step -> Stop -> Step -> Stop` acoustic experiment (300 Hz to 1300 Hz in 100 Hz steps) inside a 2-meter pipe ($L = 2.0\text{ m}$, $v = 346\text{ m/s}$).
+The script synthesizes a 17-step `Step -> Stop -> Step -> Stop` acoustic experiment (300 Hz to 1900 Hz in 100 Hz steps) inside a 2-meter pipe with 100 mm diameter ($L = 2.0\text{ m}$, $D = 0.10\text{ m}$, $v = 346\text{ m/s}$).
 
-Each frequency step runs for a **1.0-second total cycle**, broken into three distinct physical phases:
+Each frequency step runs for a **3.0-second total cycle**, broken into three distinct physical phases:
 
 ```text
-|<--------------------------- 1.0 Second Cycle --------------------------->|
-|-- 0 to 15 ms --|---------- 15 ms to 800 ms ----------|-- 800 to 1000 ms --|
+|<--------------------------- 3.0 Second Cycle --------------------------->|
+|-- 0 to 15 ms --|--------- 15 ms to 2000 ms ----------|-- 2000 to 3000 ms --|
   Leading Edge              Steady-State Tone                 Silence Gap
 (Reflectometry)            (Resonance & FFT)              (Decay & Reset)
 ```
@@ -193,7 +198,7 @@ This phase models the initial travel of the sound down the pipe *before* standin
 
 ---
 
-### Phase 2: Steady-State Standing Wave (15 ms to 800 ms)
+### Phase 2: Steady-State Standing Wave (15 ms to 2000 ms)
 After 15 ms, sound waves have bounced back and forth multiple times, transitioning into a continuous acoustic standing wave. This continuous wave provides the data for the **Frequency Spectrum (FFT)** and **Spectrogram**:
 
 - **Acoustic Wave Number**: $k = \frac{2\pi f_k}{v}$
@@ -208,9 +213,9 @@ $$s_{\text{steady}}(t) = 0.35 \cdot \left(\frac{G(f_k)}{2.5}\right) \cdot \sin(2
 
 ---
 
-### Phase 3: Silence Gap (800 ms to 1000 ms)
-The sound is set to zero for 200 ms ($0.2\text{ s}$):
-$$s(t) = 0, \quad 800\text{ ms} \le t \le 1000\text{ ms}$$
+### Phase 3: Silence Gap (2000 ms to 3000 ms)
+The sound is set to zero for 1000 ms ($1.0\text{ s}$):
+$$s(t) = 0, \quad 2000\text{ ms} \le t \le 3000\text{ ms}$$
 This quiet window allows pipe reverberation to decay completely so the next frequency step starts with a clean zero baseline and a crisp, detectable onset ($t_0$).
 
 ---
