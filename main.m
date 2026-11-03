@@ -34,6 +34,10 @@ SAVE_FORMAT = 'svg'; % Image export format ('svg', 'png', etc.)
 SAVE_FIG    = true;  % Save interactive MATLAB .fig file (enables zoom/pan in MATLAB)
 SHOW_PLOTS  = false; % Set to true to display figures while running
 
+% Signal Alignment
+AUTO_ALIGN    = true; % Auto-align using first spike peak as reference
+PRE_TRIGGER_S = 0.5;  % Pre-trigger duration (seconds) before peak to retain
+
 %% Validate Input Directory
 if ~exist(INPUT_ROOT, 'dir')
     warning('Input directory "%s" does not exist. Creating folder structure...', INPUT_ROOT);
@@ -65,7 +69,9 @@ analyzer = AudioAnalyzer('', ...
     'PipeDiameter', PIPE_DIAMETER, ...
     'SoundSpeed', SOUND_SPEED, ...
     'EnableDistance', ENABLE_DISTANCE, ...
-    'KnownBlockage', KNOWN_BLOCKAGE);
+    'KnownBlockage', KNOWN_BLOCKAGE, ...
+    'AutoAlign', AUTO_ALIGN, ...
+    'PreTriggerSeconds', PRE_TRIGGER_S);
 
 totalFilesProcessed = 0;
 
@@ -113,6 +119,28 @@ for t = 1:length(trialDirs)
 
         catch ME
             fprintf(2, '  [ERROR] Failed to process %s: %s\n', fileName, ME.message);
+        end
+    end
+
+    % Automatically create aligned overlay comparison if exactly 2 files in trial
+    if length(audioFiles) == 2
+        file1 = audioFiles(1).name; [~, base1, ~] = fileparts(file1);
+        file2 = audioFiles(2).name; [~, base2, ~] = fileparts(file2);
+        figPath1 = fullfile(OUTPUT_ROOT, trialName, base1, 'amplitude.fig');
+        figPath2 = fullfile(OUTPUT_ROOT, trialName, base2, 'amplitude.fig');
+        overlayFig = fullfile(OUTPUT_ROOT, trialName, 'overlay_amplitude.fig');
+        overlaySvg = fullfile(OUTPUT_ROOT, trialName, 'overlay_amplitude.svg');
+        
+        try
+            stack_figures(figPath1, figPath2, overlaySvg, ...
+                'Mode', 'overlay', ...
+                'Label1', base1, ...
+                'Label2', base2, ...
+                'Alpha', 0.55);
+            linkOverlay = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Overlay Amplitude]</a>', strrep(overlayFig, '\', '/'));
+            fprintf('  [Overlay] Generated aligned comparison -> 1-Click: %s\n', linkOverlay);
+        catch ME_overlay
+            fprintf(2, '  [WARN] Could not generate overlay: %s\n', ME_overlay.message);
         end
     end
 end

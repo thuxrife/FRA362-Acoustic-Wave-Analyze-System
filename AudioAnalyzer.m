@@ -35,6 +35,11 @@ classdef AudioAnalyzer < handle
         SoundSpeed (1, 1) double = 346.0  % Speed of sound in m/s
         EnableDistance (1, 1) logical = true % Export amplitude-distance plot
         KnownBlockage (1, 1) double = NaN % Dimensionless position of known blockage (e.g. 0.40)
+
+        % Signal Alignment Parameters
+        AutoAlign (1, 1) logical = true   % Align time axis using the first spike peak as reference
+        PreTriggerSeconds (1, 1) double = 0.5 % Buffer duration (seconds) before first peak to retain
+        ReferencePeakTime double = NaN    % Timestamp (seconds in raw audio) of detected reference peak
     end
 
     methods
@@ -59,6 +64,8 @@ classdef AudioAnalyzer < handle
             addParameter(p, 'SoundSpeed', obj.SoundSpeed, @(x) isnumeric(x) && x > 0);
             addParameter(p, 'EnableDistance', obj.EnableDistance, @islogical);
             addParameter(p, 'KnownBlockage', obj.KnownBlockage, @isnumeric);
+            addParameter(p, 'AutoAlign', obj.AutoAlign, @islogical);
+            addParameter(p, 'PreTriggerSeconds', obj.PreTriggerSeconds, @(x) isnumeric(x) && x >= 0);
             parse(p, varargin{:});
 
             obj.TimeRange = p.Results.TimeRange;
@@ -76,6 +83,8 @@ classdef AudioAnalyzer < handle
             obj.SoundSpeed = p.Results.SoundSpeed;
             obj.EnableDistance = p.Results.EnableDistance;
             obj.KnownBlockage = p.Results.KnownBlockage;
+            obj.AutoAlign = p.Results.AutoAlign;
+            obj.PreTriggerSeconds = p.Results.PreTriggerSeconds;
 
             if ~isempty(obj.FilePath)
                 obj.loadFile(obj.FilePath);
@@ -94,6 +103,39 @@ classdef AudioAnalyzer < handle
 
             obj.SampleRate = fs;
             obj.NumChannels = size(data, 2);
+
+            % Auto-alignment to first excitation spike peak with pre-trigger buffer
+            if obj.AutoAlign
+                try
+                    env = abs(hilbert(monoData));
+                catch
+                    env = abs(monoData);
+                end
+                
+                threshOnset = 0.08 * max(env);
+                pOnset = find(env > threshOnset, 1);
+                if ~isempty(pOnset)
+                    % Locate the immediate first peak of the leading excitation cycle (within 15 ms)
+                    searchWin = min(length(env), pOnset + round(0.015 * fs));
+                    [~, locs] = findpeaks(env(pOnset:searchWin), 'MinPeakDistance', round(0.002 * fs));
+                    if ~isempty(locs)
+                        idxPeak = pOnset + locs(1) - 1;
+                    else
+                        [~, relPeak] = max(env(pOnset:searchWin));
+                        idxPeak = pOnset + relPeak - 1;
+                    end
+                    obj.ReferencePeakTime = (idxPeak - 1) / fs;
+                    
+                    % Add pre-trigger seconds back of time
+                    idxStart = max(1, idxPeak - round(obj.PreTriggerSeconds * fs));
+                    monoData = monoData(idxStart:end);
+                else
+                    obj.ReferencePeakTime = NaN;
+                end
+            else
+                obj.ReferencePeakTime = NaN;
+            end
+
             obj.RawAudioData = monoData;
 
             obj.applyTimeWindow();
@@ -116,7 +158,11 @@ classdef AudioAnalyzer < handle
             else
                 tPlot = obj.TimeVector;
                 xUnit = 's';
-                xLabelText = sprintf('Time (%s)', xUnit);
+                if obj.AutoAlign && ~isnan(obj.ReferencePeakTime)
+                    xLabelText = sprintf('Time (%s) [Aligned: 1st Peak at 0s, Pre-trigger -%.1fs]', xUnit, obj.PreTriggerSeconds);
+                else
+                    xLabelText = sprintf('Time (%s)', xUnit);
+                end
             end
 
             plot(tPlot, obj.AudioData, 'b');
@@ -191,7 +237,13 @@ classdef AudioAnalyzer < handle
             maxDB = max(dB(:));
             minDB = maxDB - obj.DynamicRangeDB;
 
-            imagesc(t, f, dB);
+            if obj.AutoAlign && ~isnan(obj.ReferencePeakTime)
+                tPlot = t - obj.PreTriggerSeconds;
+            else
+                tPlot = t;
+            end
+
+            imagesc(tPlot, f, dB);
             axis xy;
             colormap jet;
             colorbar;
@@ -352,10 +404,16 @@ classdef AudioAnalyzer < handle
             totalSamples = length(obj.RawAudioData);
             totalDuration = totalSamples / obj.SampleRate;
 
+            if obj.AutoAlign && ~isnan(obj.ReferencePeakTime)
+                timeOffset = obj.PreTriggerSeconds;
+            else
+                timeOffset = 0;
+            end
+
             if isempty(obj.TimeRange)
                 obj.AudioData = obj.RawAudioData;
                 obj.Duration = totalDuration;
-                obj.TimeVector = (0:totalSamples-1) / obj.SampleRate;
+                obj.TimeVector = (0:totalSamples-1) / obj.SampleRate - timeOffset;
                 obj.IsMillisecondScale = (totalDuration <= 1.0);
             else
                 tStart = max(0, obj.TimeRange(1));
@@ -366,7 +424,7 @@ classdef AudioAnalyzer < handle
                 
                 obj.AudioData = obj.RawAudioData(idxStart:idxEnd);
                 obj.Duration = (idxEnd - idxStart + 1) / obj.SampleRate;
-                obj.TimeVector = (idxStart-1 : idxEnd-1) / obj.SampleRate;
+                obj.TimeVector = (idxStart-1 : idxEnd-1) / obj.SampleRate - timeOffset;
                 
                 obj.IsMillisecondScale = (obj.Duration <= 1.0);
             end

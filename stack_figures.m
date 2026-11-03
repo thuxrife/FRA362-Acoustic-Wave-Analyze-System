@@ -1,28 +1,42 @@
-function figOut = stack_figures(path1, path2, outputPath, varargin)
+function figOut = stack_figures(path1, path2, varargin)
 % STACK_FIGURES Displays two MATLAB figures (.fig) or image files together:
 %   - 'overlay' mode: Plots Graph 1 directly on top of Graph 2 on the same axes.
 %   - 'stack' mode:   Places Graph 1 in a top panel and Graph 2 in a bottom panel.
 %
 % Usage:
 %   stack_figures('0/amplitude.fig', '1/amplitude.fig', 'Mode', 'overlay') % Overlaid on same plot
+%   stack_figures('0/amplitude.fig', '1/amplitude.fig', 'out.svg', 'Mode', 'overlay') % Exported to out.svg
 %   stack_figures('0/amplitude.fig', '1/amplitude.fig', 'Mode', 'stack')   % Top / Bottom panels
 
 p = inputParser;
 addRequired(p, 'path1', @ischar);
 addRequired(p, 'path2', @ischar);
-addOptional(p, 'outputPath', '', @ischar);
+addParameter(p, 'OutputPath', '', @ischar);
 addParameter(p, 'Mode', 'overlay', @(x) any(validatestring(x, {'overlay', 'stack'})));
 addParameter(p, 'TopTitle', '', @ischar);
 addParameter(p, 'BottomTitle', '', @ischar);
 addParameter(p, 'Label1', 'Trial 0 (Blocked)', @ischar);
 addParameter(p, 'Label2', 'Trial 1 (Clean)', @ischar);
+addParameter(p, 'Alpha', 0.55, @(x) isnumeric(x) && x >= 0 && x <= 1);
+addParameter(p, 'Color1', [0.88, 0.22, 0.18], @isnumeric); % Dimmed Red
+addParameter(p, 'Color2', [0.12, 0.52, 0.88], @isnumeric); % Dimmed Sky Blue
 addParameter(p, 'LinkX', true, @islogical);
-parse(p, path1, path2, varargin{:});
 
-if nargin > 2 && ~isempty(outputPath)
-    outPath = outputPath;
+% Detect optional positional outputPath if 3rd argument is not a param name
+if ~isempty(varargin) && ischar(varargin{1}) && ~ismember(lower(varargin{1}), ...
+        {'mode', 'toptitle', 'bottomtitle', 'label1', 'label2', 'alpha', 'color1', 'color2', 'linkx', 'outputpath'})
+    optOut = varargin{1};
+    remArgs = varargin(2:end);
 else
-    outPath = p.Results.outputPath;
+    optOut = '';
+    remArgs = varargin;
+end
+
+parse(p, path1, path2, remArgs{:});
+
+outPath = p.Results.OutputPath;
+if isempty(outPath)
+    outPath = optOut;
 end
 
 % Check file existence
@@ -48,10 +62,10 @@ end
 
 %% Branch 1: Handling MATLAB .fig files (Interactive vector axes)
 if strcmpi(ext1, '.fig') && strcmpi(ext2, '.fig')
-    fig1 = openfig(path1, 'invisible');
-    fig2 = openfig(path2, 'invisible');
-    c1 = onCleanup(@() close(fig1));
-    c2 = onCleanup(@() close(fig2));
+    fig1 = openfig(path1, 'new', 'invisible');
+    fig2 = openfig(path2, 'new', 'invisible');
+    c1 = onCleanup(@() closeSafely(fig1));
+    c2 = onCleanup(@() closeSafely(fig2));
 
     ax1 = findobj(fig1, 'Type', 'axes');
     ax2 = findobj(fig2, 'Type', 'axes');
@@ -69,23 +83,27 @@ if strcmpi(ext1, '.fig') && strcmpi(ext2, '.fig')
         newAx = axes(figOut);
         hold(newAx, 'on');
 
-        % Copy Graph 2 (Base curve - e.g. Clean) in Blue
+        alphaVal = p.Results.Alpha;
+        color1_rgba = [p.Results.Color1(1:3), alphaVal];
+        color2_rgba = [p.Results.Color2(1:3), alphaVal];
+
+        % Copy Graph 2 (Base curve - e.g. Clean) in Dimmed Blue
         ch2 = allchild(ax2);
         h2 = copyobj(ch2, newAx);
         for i = 1:length(h2)
             if isprop(h2(i), 'Color')
-                h2(i).Color = [0.15, 0.45, 0.85]; % Blue
-                h2(i).LineWidth = 1.0;
+                h2(i).Color = color2_rgba;
+                h2(i).LineWidth = 1.3;
             end
         end
 
-        % Copy Graph 1 (On top curve - e.g. Blocked) in Red
+        % Copy Graph 1 (On top curve - e.g. Blocked) in Dimmed Red
         ch1 = allchild(ax1);
         h1 = copyobj(ch1, newAx);
         for i = 1:length(h1)
             if isprop(h1(i), 'Color')
-                h1(i).Color = [0.90, 0.20, 0.15]; % Red
-                h1(i).LineWidth = 1.2;
+                h1(i).Color = color1_rgba;
+                h1(i).LineWidth = 1.3;
             end
         end
 
@@ -192,4 +210,11 @@ function copyAxesProperties(srcAx, dstAx)
     xlabel(dstAx, srcAx.XLabel.String, 'Interpreter', srcAx.XLabel.Interpreter);
     ylabel(dstAx, srcAx.YLabel.String, 'Interpreter', srcAx.YLabel.Interpreter);
     title(dstAx, srcAx.Title.String, 'Interpreter', srcAx.Title.Interpreter);
+end
+
+%% Helper: Safely close figure handle
+function closeSafely(f)
+    if ~isempty(f) && isvalid(f)
+        close(f);
+    end
 end
