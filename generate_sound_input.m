@@ -1,21 +1,21 @@
 %% Generate Clean Test Sound Input for Speaker Playback
 % Produces a noise-free, high-fidelity stepped-frequency audio track
 % designed specifically for the 100 mm diameter laboratory pipe:
-% - 17 discrete frequencies: 300 Hz to 1900 Hz (100 Hz steps, strictly below ~2028 Hz cut-off)
-% - Cycle per step: 2.0s pure tone + 1.0s dead silence (3.0s total per step)
-% - Total duration: 51.0 seconds
+% - 16 discrete frequencies: 300 Hz to 1800 Hz (100 Hz steps, strictly below ~2028 Hz cut-off)
+% - Cycle per step: 0.15s (150 ms) pure tone + 0.25s (250 ms) dead silence (0.40s total per step)
+% - Total duration: 6.4 seconds (plus 0.5s leading silence pad = 6.9s)
 % - Amplitude: 0.80 peak (normalized to prevent DAC clipping/distortion)
 % - Zero noise added
 
 clear; clc;
 
 fs = 44100;                         % Standard 44.1 kHz sampling rate
-freqSteps = 300:100:1900;           % 17 steps below 100mm pipe cut-off (~2028 Hz)
+freqSteps = 300:100:1800;           % 16 steps below 100mm pipe cut-off (~2028 Hz)
 numSteps = length(freqSteps);
 
-toneDuration = 2.0;                 % 2.0 seconds per tone
-gapDuration  = 1.0;                 % 1.0 second silence gap between tones
-stepCycle    = toneDuration + gapDuration; % 3.0 seconds per step
+toneDuration = 0.15;                % 150 ms per tone (45 to 270 cycles; ~13x pipe round-trip time)
+gapDuration  = 0.25;                % 250 ms silence gap between tones for full reverb decay
+stepCycle    = toneDuration + gapDuration; % 0.40 seconds per step
 totalDuration = numSteps * stepCycle;
 
 t = 0:(1/fs):(totalDuration - 1/fs);
@@ -40,12 +40,12 @@ if ~exist(outputDir, 'dir')
     mkdir(outputDir);
 end
 
-outputWav = fullfile(outputDir, 'stepped_tones_100mm_2s_1s.wav');
+outputWav = fullfile(outputDir, 'stepped_tones_100mm_150ms_250ms.wav');
 audiowrite(outputWav, signal, fs, 'BitsPerSample', 24);
 
 fprintf('Successfully generated pure speaker excitation track:\n');
 fprintf('  File:     %s\n', outputWav);
-fprintf('  Steps:    %d frequencies (300 Hz to 1900 Hz in 100 Hz steps)\n', numSteps);
-fprintf('  Timing:   2.0s tone + 1.0s silence gap per frequency step\n');
-fprintf('  Duration: %.1f seconds total (51.0s)\n', totalDuration);
+fprintf('  Steps:    %d frequencies (300 Hz to 1800 Hz in 100 Hz steps)\n', numSteps);
+fprintf('  Timing:   %.0f ms tone + %.0f ms silence gap per frequency step\n', toneDuration*1000, gapDuration*1000);
+fprintf('  Duration: %.1f seconds total\n', totalDuration);
 fprintf('  Noise:    0.0%% (pure mathematical sine waves)\n');

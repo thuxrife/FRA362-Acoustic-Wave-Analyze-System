@@ -38,8 +38,9 @@ classdef AudioAnalyzer < handle
 
         % Signal Alignment Parameters
         AutoAlign (1, 1) logical = true   % Align time axis using the first spike peak as reference
-        PreTriggerSeconds (1, 1) double = 0.5 % Buffer duration (seconds) before first peak to retain
+        PreTriggerSeconds (1, 1) double = 0.2 % Buffer duration (seconds) before first peak to retain
         ReferencePeakTime double = NaN    % Timestamp (seconds in raw audio) of detected reference peak
+        MinStepSeparation (1, 1) double = 0.25 % Minimum time (s) between consecutive frequency step onsets
     end
 
     methods
@@ -66,6 +67,7 @@ classdef AudioAnalyzer < handle
             addParameter(p, 'KnownBlockage', obj.KnownBlockage, @isnumeric);
             addParameter(p, 'AutoAlign', obj.AutoAlign, @islogical);
             addParameter(p, 'PreTriggerSeconds', obj.PreTriggerSeconds, @(x) isnumeric(x) && x >= 0);
+            addParameter(p, 'MinStepSeparation', obj.MinStepSeparation, @(x) isnumeric(x) && x > 0);
             parse(p, varargin{:});
 
             obj.TimeRange = p.Results.TimeRange;
@@ -85,6 +87,7 @@ classdef AudioAnalyzer < handle
             obj.KnownBlockage = p.Results.KnownBlockage;
             obj.AutoAlign = p.Results.AutoAlign;
             obj.PreTriggerSeconds = p.Results.PreTriggerSeconds;
+            obj.MinStepSeparation = p.Results.MinStepSeparation;
 
             if ~isempty(obj.FilePath)
                 obj.loadFile(obj.FilePath);
@@ -286,8 +289,8 @@ classdef AudioAnalyzer < handle
             diffAbove = [0; diff(isAbove)];
             risingEdges = find(diffAbove == 1);
             
-            % Enforce minimum separation of 0.8s between step onsets
-            minSamples = round(0.8 * fs);
+            % Enforce minimum separation between step onsets
+            minSamples = round(obj.MinStepSeparation * fs);
             stepOnsets = [];
             for idx = risingEdges'
                 if isempty(stepOnsets) || (idx - stepOnsets(end) >= minSamples)
@@ -389,9 +392,236 @@ classdef AudioAnalyzer < handle
                 obj.plotAmplitudeDistance(distFile);
             end
         end
+
+        function exportRawCSV(obj, csvFilePath)
+            % Exports aligned raw time-series and step metadata to /logged CSV
+            % Columns: Time_s, Amplitude, Envelope, Step_ID, Freq_Hz
+            [parentDir, ~, ~] = fileparts(csvFilePath);
+            if ~isempty(parentDir) && ~exist(parentDir, 'dir')
+                mkdir(parentDir);
+            end
+
+            try
+                env = abs(hilbert(obj.AudioData));
+            catch
+                env = abs(obj.AudioData);
+            end
+
+            [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps(env);
+            N = length(obj.AudioData);
+            stepIDCol = zeros(N, 1);
+            freqCol   = zeros(N, 1);
+
+            for k = 1:length(stepOnsets)
+                idx1 = stepOnsets(k);
+                idx2 = stepEnds(k);
+                stepIDCol(idx1:idx2) = k;
+                freqCol(idx1:idx2)   = stepFreqs(k);
+            end
+
+            T = table( ...
+                round(obj.TimeVector(:), 6), ...
+                round(obj.AudioData(:), 6), ...
+                round(env(:), 6), ...
+                stepIDCol, ...
+                freqCol, ...
+                'VariableNames', {'Time_s', 'Amplitude', 'Envelope', 'Step_ID', 'Freq_Hz'});
+
+            writetable(T, csvFilePath);
+        end
+
+        function T_raw = loadFromCSV(obj, csvFilePath)
+            % Loads a logged raw CSV file back into AudioAnalyzer
+            obj.FilePath = csvFilePath;
+            T_raw = readtable(csvFilePath);
+
+            obj.TimeVector = T_raw.Time_s(:)';
+            obj.AudioData  = T_raw.Amplitude(:);
+            obj.RawAudioData = obj.AudioData;
+            obj.NumChannels = 1;
+
+            if length(obj.TimeVector) > 1
+                dt = median(diff(obj.TimeVector));
+                obj.SampleRate = round(1 / dt);
+            end
+            obj.Duration = length(obj.AudioData) / obj.SampleRate;
+            obj.IsMillisecondScale = (obj.Duration <= 1.0);
+            if obj.TimeVector(1) < 0
+                obj.ReferencePeakTime = abs(obj.TimeVector(1));
+                obj.PreTriggerSeconds = abs(obj.TimeVector(1));
+            end
+        end
+
+        function featTable = extractStepFeatures(obj, outputCsvPath, T_raw)
+            % Extracts per-frequency step features (e.g. 16 frequency steps)
+            if nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
+                try
+                    env = T_raw.Envelope(:);
+                catch
+                    env = abs(hilbert(obj.AudioData));
+                end
+                uniqueSteps = unique(T_raw.Step_ID(T_raw.Step_ID > 0), 'stable');
+                numSteps = length(uniqueSteps);
+                stepOnsets = zeros(numSteps, 1);
+                stepEnds   = zeros(numSteps, 1);
+                stepFreqs  = zeros(numSteps, 1);
+                for k = 1:numSteps
+                    mask = (T_raw.Step_ID == uniqueSteps(k));
+                    stepOnsets(k) = find(mask, 1, 'first');
+                    stepEnds(k)   = find(mask, 1, 'last');
+                    stepFreqs(k)  = median(T_raw.Freq_Hz(mask));
+                end
+            else
+                try
+                    env = abs(hilbert(obj.AudioData));
+                catch
+                    env = abs(obj.AudioData);
+                end
+                [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps(env);
+                numSteps = length(stepOnsets);
+            end
+
+            fs = obj.SampleRate;
+            v  = obj.SoundSpeed;
+            L  = obj.ModelLength;
+            T_pipe = 2 * L / v;
+            maxWinSamples = round(1.15 * T_pipe * fs);
+
+            Step_ID          = (1:numSteps)';
+            Freq_Hz          = zeros(numSteps, 1);
+            Onset_Time_s     = zeros(numSteps, 1);
+            Duration_s       = zeros(numSteps, 1);
+            Direct_Peak_Amp  = zeros(numSteps, 1);
+            Echo_Peak_Amp    = zeros(numSteps, 1);
+            Echo_Location_xL = zeros(numSteps, 1);
+            Step_RMS         = zeros(numSteps, 1);
+            Step_Peak_Amp    = zeros(numSteps, 1);
+            Energy_dB        = zeros(numSteps, 1);
+
+            for k = 1:numSteps
+                idx1 = stepOnsets(k);
+                idx2 = stepEnds(k);
+                sigStep = obj.AudioData(idx1:idx2);
+                envStep = env(idx1:idx2);
+
+                Freq_Hz(k)       = stepFreqs(k);
+                Onset_Time_s(k)  = round(obj.TimeVector(idx1), 4);
+                Duration_s(k)    = round((idx2 - idx1 + 1) / fs, 4);
+                Step_RMS(k)      = round(rms(sigStep), 6);
+                Step_Peak_Amp(k) = round(max(envStep), 6);
+                Energy_dB(k)     = round(20 * log10(Step_RMS(k) + eps), 3);
+
+                % Leading-edge transit window analysis (0 to 1.15 * T_pipe)
+                idxSearchDirect = min(length(env), idx1 + round(0.008 * fs));
+                [directPk, relPk] = max(env(idx1:idxSearchDirect));
+                idxDirect = idx1 + relPk - 1;
+                Direct_Peak_Amp(k) = round(directPk, 6);
+
+                idxWinEnd = min(length(env), idxDirect + maxWinSamples);
+                envTransit = env(idxDirect:idxWinEnd);
+                tTransit   = (0:length(envTransit) - 1)' / fs;
+                xL_vec     = (tTransit * v) / (2 * L);
+
+                % Search reflection echo inside pipe interior x/L in [0.15, 0.90]
+                echoMask = (xL_vec >= 0.15) & (xL_vec <= 0.90);
+                if any(echoMask)
+                    subEnv = envTransit(echoMask);
+                    subXL  = xL_vec(echoMask);
+                    [echoPk, idxEcho] = max(subEnv);
+                    Echo_Peak_Amp(k)    = round(echoPk, 6);
+                    Echo_Location_xL(k) = round(subXL(idxEcho), 4);
+                end
+            end
+
+            featTable = table(Step_ID, Freq_Hz, Onset_Time_s, Duration_s, ...
+                Direct_Peak_Amp, Echo_Peak_Amp, Echo_Location_xL, ...
+                Step_RMS, Step_Peak_Amp, Energy_dB);
+
+            if nargin >= 2 && ~isempty(outputCsvPath)
+                [pDir, ~, ~] = fileparts(outputCsvPath);
+                if ~isempty(pDir) && ~exist(pDir, 'dir')
+                    mkdir(pDir);
+                end
+                writetable(featTable, outputCsvPath);
+            end
+        end
     end
 
     methods (Access = private)
+        function [stepOnsets, stepEnds, stepFreqs] = detectFrequencySteps(obj, env)
+            fs = obj.SampleRate;
+            smoothEnv = movmean(env, max(1, round(0.008 * fs)));
+            noiseFloor = median(smoothEnv(1:min(length(smoothEnv), round(0.1 * fs))));
+            thresh = max(0.08 * max(smoothEnv), 3.5 * noiseFloor);
+
+            isAbove = smoothEnv > thresh;
+            diffAbove = [0; diff(isAbove(:))];
+            risingEdges = find(diffAbove == 1);
+
+            minSamples = round(obj.MinStepSeparation * fs);
+            stepOnsets = [];
+            for idx = risingEdges'
+                if isempty(stepOnsets) || (idx - stepOnsets(end) >= minSamples)
+                    stepOnsets(end + 1, 1) = idx; %#ok<AGROW>
+                end
+            end
+
+            if isempty(stepOnsets)
+                stepOnsets = 1;
+            end
+
+            numSteps = length(stepOnsets);
+            stepEnds  = zeros(numSteps, 1);
+            stepFreqs = zeros(numSteps, 1);
+
+            for k = 1:numSteps
+                idx1 = stepOnsets(k);
+                if k < numSteps
+                    maxIdx = stepOnsets(k + 1) - 1;
+                else
+                    maxIdx = length(smoothEnv);
+                end
+
+                % Find where step tone drops back below threshold
+                subBelow = find(~isAbove(idx1:maxIdx), 1, 'first');
+                if ~isempty(subBelow) && subBelow > round(0.02 * fs)
+                    idx2 = idx1 + subBelow - 1;
+                else
+                    idx2 = min(maxIdx, idx1 + round(0.8 * (maxIdx - idx1)));
+                end
+                stepEnds(k) = max(idx1 + 1, idx2);
+
+                % Estimate dominant excitation frequency via FFT
+                seg = obj.AudioData(idx1:stepEnds(k));
+                Lseg = length(seg);
+                nfft = 2^nextpow2(max(1024, Lseg));
+                Y = abs(fft(seg, nfft));
+                P1 = Y(1:floor(nfft/2) + 1);
+                fVec = fs * (0:(nfft/2)) / nfft;
+                validF = (fVec >= 250) & (fVec <= 2500);
+                if any(validF)
+                    subP = P1(validF);
+                    subF = fVec(validF);
+                    [~, iMax] = max(subP);
+                    rawF = subF(iMax);
+                    if abs(rawF - round(rawF / 100) * 100) <= 22
+                        stepFreqs(k) = round(rawF / 100) * 100;
+                    else
+                        stepFreqs(k) = round(rawF);
+                    end
+                end
+            end
+
+            % Filter out spurious low-energy reverb tails between steps
+            stepRmsVec = zeros(numSteps, 1);
+            for k = 1:numSteps
+                stepRmsVec(k) = rms(obj.AudioData(stepOnsets(k):stepEnds(k)));
+            end
+            validSteps = (stepRmsVec >= 0.20 * median(stepRmsVec)) & (stepFreqs >= 250);
+            stepOnsets = stepOnsets(validSteps);
+            stepEnds   = stepEnds(validSteps);
+            stepFreqs  = stepFreqs(validSteps);
+        end
         function header = formatTitle(obj, defaultTitle)
             if ~isempty(obj.TitlePrefix)
                 header = {obj.TitlePrefix; defaultTitle};
