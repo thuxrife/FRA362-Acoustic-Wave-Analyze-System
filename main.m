@@ -1,122 +1,191 @@
-%% Main Batch Processing Script
-% Scans input directory hierarchy: mp3/{trial_folder}/{id}.mp3
-% Outputs analysis plots to: analyze/{trial_folder}/{id}/
+function main(targetTrial)
+%% Master Batch Pipeline Runner (mp3/ -> logged/ -> analyze/)
+% Automates the end-to-end acoustic wave analysis pipeline in 2 stages:
 %
-% Generates 4 acoustic plots per audio file:
-% 1. Amplitude vs Time (amplitude.svg / .fig)
-% 2. Frequency Spectrum (frequency.svg / .fig)
-% 3. Spectrogram (spectrogram.svg / .fig)
-% 4. Amplitude vs Dimensionless Distance (amplitude-distance.svg / .fig)
+%   STAGE 1 (Raw Ingestion & Logging):
+%     - Scans mp3/{trial}/{sample}.wav (or .mp3)
+%     - Detects acoustic onset and auto-aligns 1st excitation peak to t = 0.0s
+%     - Retains 0.2s pre-trigger baseline (starts at t = -0.200s)
+%     - Identifies active frequency steps (1..16) and Hilbert envelope
+%     - Exports calibrated time series to: logged/{trial}/{sample}.csv
+%
+%   STAGE 2 (Feature Extraction & Interactive Visualization):
+%     - Discovers all logged datasets in logged/{trial}/{sample}.csv
+%     - Computes discrete per-frequency features (Step_ID, Freq_Hz, Onset_Time_s,
+%       Duration_s, Step_RMS, Step_Peak_Amp, Energy_dB)
+%     - Exports tabular summary to: analyze/{trial}/{sample}/features_by_frequency.csv
+%     - Generates 3 interactive .fig plots with live coordinate bar:
+%       * amplitude.fig   (Waveform + envelope + step highlights)
+%       * frequency.fig   (Full spectrum + 16 step peak markers)
+%       * spectrogram.fig (Time-frequency energy distribution)
+%
+% Usage:
+%   main                               % Process all trials in mp3/
+%   main('2026-11-06-recording-test')  % Process a specific trial only
 
-clear; clc;
-
-%% Configuration
-INPUT_ROOT  = 'mp3';
-OUTPUT_ROOT = 'analyze';
-
-% Pipe Duct Geometry Settings
-MODEL_LENGTH    = 2.0;   % Pipe length in meters (L)
-PIPE_DIAMETER   = 0.10;  % Model pipe diameter (100 mm = 0.10 m)
-SOUND_SPEED     = 346.0; % Speed of sound in air at ~25 C (m/s)
-ENABLE_DISTANCE = false; % Reflectometry disabled
-
-% Acoustic Cut-off & Frequency Bounds
-% Cut-off for 100mm circular pipe: f_c = 0.586 * v / D ~ 2028 Hz
-MAX_FREQ    = 2200;  % Display through 2200 Hz to show cut-off boundary at ~2028 Hz
-TIME_RANGE  = [];    % [] for full file duration
-MAX_AMP     = [];    % Max amplitude limit (empty = auto-scale)
-
-% Spectrogram Windowing for Discrete Tone Steps
-WINDOW_LEN  = 1024;  
-OVERLAP_LEN = 512;   
-SAVE_IMAGE  = false; % Only save .fig by default (no SVG)
-SAVE_FIG    = true;  % Save interactive MATLAB .fig file (enables zoom/pan in MATLAB)
-SHOW_PLOTS  = false; % Set to true to display figures while running
-
-% Signal Alignment
-AUTO_ALIGN    = true; % Auto-align using first spike peak as reference
-PRE_TRIGGER_S = 0.2;  % Pre-trigger duration (seconds) before peak to retain
-
-%% Validate Input Directory
-if ~exist(INPUT_ROOT, 'dir')
-    warning('Input directory "%s" does not exist. Creating folder structure...', INPUT_ROOT);
-    mkdir(INPUT_ROOT);
-    fprintf('Please place your trial folders inside "%s" and run again.\n', INPUT_ROOT);
-    return;
-end
-
-%% Discover Trial Folders
-trialDirs = dir(INPUT_ROOT);
-trialDirs = trialDirs([trialDirs.isdir] & ~ismember({trialDirs.name}, {'.', '..'}));
-
-if isempty(trialDirs)
-    fprintf('No trial folders found in "%s".\n', INPUT_ROOT);
-    return;
-end
-
-%% Initialize Acoustic Analyzer
-analyzer = AudioAnalyzer('', ...
-    'TimeRange', TIME_RANGE, ...
-    'MaxAmplitude', MAX_AMP, ...
-    'MaxFrequency', MAX_FREQ, ...
-    'WindowLength', WINDOW_LEN, ...
-    'OverlapLength', OVERLAP_LEN, ...
-    'SaveImage', SAVE_IMAGE, ...
-    'SaveFig', SAVE_FIG, ...
-    'VisibleFigures', SHOW_PLOTS, ...
-    'ModelLength', MODEL_LENGTH, ...
-    'PipeDiameter', PIPE_DIAMETER, ...
-    'SoundSpeed', SOUND_SPEED, ...
-    'EnableDistance', ENABLE_DISTANCE, ...
-    'AutoAlign', AUTO_ALIGN, ...
-    'PreTriggerSeconds', PRE_TRIGGER_S);
-
-totalFilesProcessed = 0;
-
-%% Process Each Trial and Audio File
-for t = 1:length(trialDirs)
-    trialName = trialDirs(t).name;
-    trialPath = fullfile(INPUT_ROOT, trialName);
-    
-    % Find all supported audio files (.mp3, .wav)
-    audioFiles = dir(fullfile(trialPath, '*.mp3'));
-    if isempty(audioFiles)
-        audioFiles = dir(fullfile(trialPath, '*.wav'));
+    if nargin < 1 || isempty(targetTrial)
+        targetTrial = ''; % Process all trials
     end
-    
-    fprintf('\n--- Processing trial [%d/%d]: %s (%d files) ---\n', ...
-        t, length(trialDirs), trialName, length(audioFiles));
 
-    for f = 1:length(audioFiles)
-        fileName = audioFiles(f).name;
-        [~, baseName, ~] = fileparts(fileName);
-        filePath = fullfile(trialPath, fileName);
-        
-        analyzer.TitlePrefix = sprintf('%s-%s', trialName, baseName);
-        targetDir = fullfile(OUTPUT_ROOT, trialName, baseName);
-        
-        try
-            analyzer.loadFile(filePath);
-            analyzer.analyzeAndExport(targetDir);
-            totalFilesProcessed = totalFilesProcessed + 1;
-            
-            % Generate 1-click MATLAB hyperlinks for Command Window
-            ampFig     = fullfile(targetDir, 'amplitude.fig');
-            freqFig    = fullfile(targetDir, 'frequency.fig');
-            specFig    = fullfile(targetDir, 'spectrogram.fig');
+    %% Configuration
+    INPUT_ROOT      = 'mp3';
+    LOGGED_ROOT     = 'logged';
+    OUTPUT_ROOT     = 'analyze';
 
-            linkAmp  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a>', strrep(ampFig, '\', '/'));
-            linkFreq = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a>', strrep(freqFig, '\', '/'));
-            linkSpec = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', strrep(specFig, '\', '/'));
-            linkDir  = sprintf('<a href="matlab:winopen(''%s'');">[Open Folder]</a>', strrep(targetDir, '\', '/'));
+    AUTO_ALIGN      = true;   % Sub-millisecond onset alignment (t=0 at 1st peak)
+    PRE_TRIGGER_S   = 0.2;    % Retain 0.2s pre-excitation baseline
+    MIN_STEP_SEP_S  = 0.25;   % Minimum step separation in seconds
+    MAX_FREQ        = 2200;   % Display cut-off boundary (Hz)
+    SAVE_FIG        = true;   % Generate interactive .fig files
+    SAVE_IMAGE      = false;  % FIG only by default (no SVG)
+    SHOW_PLOTS      = false;  % Run headlessly without pop-up windows
 
-            fprintf('  [OK] %-8s -> 1-Click: %s %s %s | %s\n', ...
-                fileName, linkAmp, linkFreq, linkSpec, linkDir);
+    fprintf('=================================================================\n');
+    fprintf('         Acoustic Rig Master Batch Pipeline Runner               \n');
+    fprintf('=================================================================\n');
 
-        catch ME
-            fprintf(2, '  [ERROR] Failed to process %s: %s\n', fileName, ME.message);
+    %% Stage 1: Ingest Raw Audio into Calibrated CSVs (mp3/ -> logged/)
+    fprintf('\n>>> STAGE 1: Raw Data Ingestion & Time-Alignment (mp3/ -> logged/) <<<\n');
+    if ~exist(INPUT_ROOT, 'dir')
+        error('Input directory "%s" does not exist. Record samples first.', INPUT_ROOT);
+    end
+
+    if isempty(targetTrial)
+        trialDirs = dir(INPUT_ROOT);
+        trialDirs = trialDirs([trialDirs.isdir] & ~ismember({trialDirs.name}, {'.', '..'}));
+    else
+        specificPath = fullfile(INPUT_ROOT, targetTrial);
+        if ~exist(specificPath, 'dir')
+            error('Specified trial directory "%s" does not exist.', specificPath);
+        end
+        trialDirs = dir(specificPath);
+        trialDirs = struct('name', targetTrial, 'isdir', true);
+    end
+
+    if isempty(trialDirs)
+        fprintf('No trials found to process in "%s".\n', INPUT_ROOT);
+        return;
+    end
+
+    loggerEngine = AudioAnalyzer('', ...
+        'AutoAlign', AUTO_ALIGN, ...
+        'PreTriggerSeconds', PRE_TRIGGER_S, ...
+        'MinStepSeparation', MIN_STEP_SEP_S);
+
+    totalLogged = 0;
+    loggedCsvList = {};
+
+    for t = 1:length(trialDirs)
+        tName = trialDirs(t).name;
+        tPath = fullfile(INPUT_ROOT, tName);
+
+        audioFiles = [dir(fullfile(tPath, '*.wav')); dir(fullfile(tPath, '*.mp3'))];
+        if isempty(audioFiles)
+            continue;
+        end
+
+        fprintf('\n--- Ingesting trial [%d/%d]: %s (%d files) ---\n', ...
+            t, length(trialDirs), tName, length(audioFiles));
+
+        for f = 1:length(audioFiles)
+            aName = audioFiles(f).name;
+            [~, baseName, ~] = fileparts(aName);
+            inFilePath  = fullfile(tPath, aName);
+            outCsvPath  = fullfile(LOGGED_ROOT, tName, [baseName, '.csv']);
+
+            try
+                loggerEngine.loadFile(inFilePath);
+                loggerEngine.exportRawCSV(outCsvPath);
+                totalLogged = totalLogged + 1;
+                loggedCsvList{end+1} = outCsvPath; %#ok<AGROW>
+
+                fprintf('  [STAGE 1 LOGGED] %-22s -> %s (Duration: %.2fs, Spike: %.3fs)\n', ...
+                    aName, strrep(outCsvPath, '\', '/'), loggerEngine.Duration, loggerEngine.ReferencePeakTime);
+            catch ME
+                fprintf(2, '  [ERROR] Ingestion failed for %s: %s\n', aName, ME.message);
+            end
         end
     end
-end
 
-fprintf('\nDone! Successfully processed %d audio files into "%s".\n', totalFilesProcessed, OUTPUT_ROOT);
+    fprintf('\nStage 1 Complete: %d dataset(s) logged to "%s/".\n', totalLogged, LOGGED_ROOT);
+
+    %% Stage 2: Feature Extraction & Interactive Visualizations (logged/ -> analyze/)
+    fprintf('\n>>> STAGE 2: Feature Extraction & FIG Plotting (logged/ -> analyze/) <<<\n');
+    
+    if isempty(loggedCsvList)
+        % Fallback discovery in logged/ directory
+        if isempty(targetTrial)
+            foundCsv = dir(fullfile(LOGGED_ROOT, '**', '*.csv'));
+        else
+            foundCsv = dir(fullfile(LOGGED_ROOT, targetTrial, '*.csv'));
+        end
+        for k = 1:length(foundCsv)
+            loggedCsvList{end+1} = fullfile(foundCsv(k).folder, foundCsv(k).name); %#ok<AGROW>
+        end
+    end
+
+    if isempty(loggedCsvList)
+        fprintf('No logged CSV files available for feature extraction.\n');
+        return;
+    end
+
+    featureEngine = AudioAnalyzer('', ...
+        'MaxFrequency', MAX_FREQ, ...
+        'SaveFig', SAVE_FIG, ...
+        'SaveImage', SAVE_IMAGE, ...
+        'VisibleFigures', SHOW_PLOTS, ...
+        'EnableDistance', false, ...
+        'MinStepSeparation', MIN_STEP_SEP_S);
+
+    totalAnalyzed = 0;
+
+    for idx = 1:length(loggedCsvList)
+        csvPath = loggedCsvList{idx};
+        if ~exist(csvPath, 'file')
+            continue;
+        end
+
+        [parentPath, sampleName, ~] = fileparts(csvPath);
+        [~, trialName, ~] = fileparts(parentPath);
+        if isempty(trialName) || strcmpi(trialName, LOGGED_ROOT)
+            trialName = 'default_trial';
+        end
+
+        targetDir = fullfile(OUTPUT_ROOT, trialName, sampleName);
+        featCsvPath = fullfile(targetDir, 'features_by_frequency.csv');
+        featureEngine.TitlePrefix = sprintf('%s-%s', trialName, sampleName);
+
+        try
+            % Ingest logged CSV and compute discrete per-frequency table
+            T_raw = featureEngine.loadFromCSV(csvPath);
+            featTable = featureEngine.extractStepFeatures(featCsvPath, T_raw);
+
+            % Generate interactive .fig plots with coordinate tracking
+            featureEngine.analyzeAndExport(targetDir);
+            totalAnalyzed = totalAnalyzed + 1;
+
+            % Generate 1-Click Interactive Hyperlinks for MATLAB Command Window
+            ampFig  = strrep(fullfile(targetDir, 'amplitude.fig'), '\', '/');
+            freqFig = strrep(fullfile(targetDir, 'frequency.fig'), '\', '/');
+            specFig = strrep(fullfile(targetDir, 'spectrogram.fig'), '\', '/');
+            featCsv = strrep(featCsvPath, '\', '/');
+            fDir    = strrep(targetDir, '\', '/');
+
+            linkFeat = sprintf('<a href="matlab:open(''%s'');">[Features CSV]</a>', featCsv);
+            linkAmp  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a>', ampFig);
+            linkFreq = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a>', freqFig);
+            linkSpec = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', specFig);
+            linkDir  = sprintf('<a href="matlab:winopen(''%s'');">[Folder]</a>', fDir);
+
+            fprintf('  [STAGE 2 OK] %-20s (%2d steps) -> %s %s %s %s | %s\n', ...
+                sampleName, height(featTable), linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
+
+        catch ME
+            fprintf(2, '  [ERROR] Feature extraction failed for %s: %s\n', csvPath, ME.message);
+        end
+    end
+
+    fprintf('\n=================================================================\n');
+    fprintf('  Pipeline Finished: %d sample(s) processed into "%s/".\n', totalAnalyzed, OUTPUT_ROOT);
+    fprintf('=================================================================\n\n');
+end
