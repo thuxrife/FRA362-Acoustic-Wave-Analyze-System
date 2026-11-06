@@ -140,12 +140,21 @@ function record_acoustic_sample()
         'Position', [15, 416, 295, 24], 'BackgroundColor', cControlBg, ...
         'ForegroundColor', cTextPri, 'FontSize', 9, 'HorizontalAlignment', 'left');
 
+    % Sample Name and Repeats Inputs
     uicontrol('Parent', pnlCtrl, 'Style', 'text', 'String', 'Sample Name (.wav):', ...
-        'Position', [15, 388, 290, 18], 'HorizontalAlignment', 'left', ...
+        'Position', [15, 388, 180, 18], 'HorizontalAlignment', 'left', ...
         'BackgroundColor', cPanelBg, 'ForegroundColor', cTextSec, 'FontSize', 9);
     txtSample = uicontrol('Parent', pnlCtrl, 'Style', 'edit', 'String', 'sound_sample_01', ...
-        'Position', [15, 364, 295, 24], 'BackgroundColor', cControlBg, ...
+        'Position', [15, 364, 180, 24], 'BackgroundColor', cControlBg, ...
         'ForegroundColor', cTextPri, 'FontSize', 9, 'HorizontalAlignment', 'left');
+
+    uicontrol('Parent', pnlCtrl, 'Style', 'text', 'String', 'Repeats (N):', ...
+        'Position', [205, 388, 105, 18], 'HorizontalAlignment', 'left', ...
+        'BackgroundColor', cPanelBg, 'ForegroundColor', cTextSec, 'FontSize', 9);
+    txtRepeats = uicontrol('Parent', pnlCtrl, 'Style', 'edit', 'String', '1', ...
+        'Position', [205, 364, 105, 24], 'BackgroundColor', cControlBg, ...
+        'ForegroundColor', cTextPri, 'FontSize', 9, 'HorizontalAlignment', 'center', ...
+        'Tooltip', 'Number of trials to repeat and ensemble-average for acoustic noise reduction');
 
     % Stimulus Track Info
     [~, stimBase, stimExt] = fileparts(stimFile);
@@ -192,10 +201,18 @@ function record_acoustic_sample()
         'ForegroundColor', cTextSec, ...
         'FontSize', 9, 'HorizontalAlignment', 'left');
 
+    % Figure Overlay Comparison Tool Button
+    btnOverlay = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+        'String', 'OVERLAY COMPARISON TOOL', ...
+        'Position', [15, 68, 295, 36], ...
+        'BackgroundColor', [0.38, 0.25, 0.55], 'ForegroundColor', [1, 1, 1], ...
+        'FontSize', 9, 'FontWeight', 'bold', ...
+        'Callback', @onOverlayClick);
+
     % 1-Click Pipeline Button
     btnPipeline = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'RUN MASTER PIPELINE (main.m)', ...
-        'Position', [15, 22, 295, 42], ...
+        'Position', [15, 18, 295, 44], ...
         'BackgroundColor', [0.18, 0.45, 0.78], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
         'Callback', @onRunPipeline);
@@ -230,19 +247,27 @@ function record_acoustic_sample()
         'ForegroundColor', [0.45, 0.85, 0.95], ...
         'FontSize', 8, 'HorizontalAlignment', 'left');
 
-    % 4B. Instant Frequency Spectrum Axes (Bottom Graph)
+    % 4B. Instant Frequency Spectrum Axes (Bottom Graph: Matches frequency.fig)
     axSpec = axes('Parent', pnlGraph, 'Units', 'pixels', ...
         'Position', [65, 55, 625, 240], ...
         'Color', cPlotBg, 'XColor', cTextSec, 'YColor', cTextSec, ...
         'GridColor', [0.22, 0.24, 0.28], 'GridAlpha', 0.8);
-    grid(axSpec, 'on'); box(axSpec, 'on');
-    title(axSpec, 'Acoustic Frequency Spectrum |S(f)| (0 - 2200 Hz)', ...
+    grid(axSpec, 'on'); box(axSpec, 'on'); hold(axSpec, 'on');
+    title(axSpec, 'Frequency Spectrum (Raw FFT)', ...
         'Color', cTextPri, 'FontSize', 10, 'FontWeight', 'bold');
     xlabel(axSpec, 'Frequency (Hz)', 'Color', cTextSec, 'FontSize', 9);
-    ylabel(axSpec, 'Magnitude (dBFS)', 'Color', cTextSec, 'FontSize', 9);
+    ylabel(axSpec, '|Amplitude|', 'Color', cTextSec, 'FontSize', 9);
     xlim(axSpec, [0, 2200]);
-    ylim(axSpec, [-90, 5]);
-    hSpecLine = line(axSpec, [0, 1], [-90, -90], 'Color', [0.95, 0.75, 0.20], 'LineWidth', 1.1);
+    ylim(axSpec, [0, 0.05]);
+    hSpecLine = plot(axSpec, [0, 1], [0, 0], 'Color', [0.95, 0.35, 0.25], 'LineWidth', 1.2);
+    hSpecPeaks = plot(axSpec, nan, nan, 'o', 'Color', [1.0, 0.85, 0.20], ...
+        'MarkerFaceColor', [0.95, 0.35, 0.25], 'MarkerSize', 5, 'LineWidth', 1.0);
+
+    % Plane wave cut-off frequency guide (2028 Hz for 100 mm pipe)
+    f_cutoff = 0.586 * 346.0 / 0.10;
+    xline(axSpec, f_cutoff, '--', sprintf('Cut-Off: %.0f Hz', f_cutoff), ...
+        'Color', [0.65, 0.68, 0.74], 'LineWidth', 1.1, 'LabelVerticalAlignment', 'top', ...
+        'LabelColor', [0.85, 0.88, 0.92]);
 
     % 4C. Vertical VU Level Meter Axes
     axMeter = axes('Parent', pnlGraph, 'Units', 'pixels', ...
@@ -272,19 +297,35 @@ function record_acoustic_sample()
         if isempty(state.recordedData)
             return;
         end
-        cp = get(axWave, 'CurrentPoint');
-        xPos = cp(1, 1);
-        yPos = cp(1, 2);
-        xLim = xlim(axWave);
-        yLim = ylim(axWave);
+        % Check if cursor is over Waveform Oscilloscope
+        cpW = get(axWave, 'CurrentPoint');
+        xW = cpW(1, 1); yW = cpW(1, 2);
+        xLimW = xlim(axWave); yLimW = ylim(axWave);
 
-        if xPos >= xLim(1) && xPos <= xLim(2) && yPos >= yLim(1) && yPos <= yLim(2)
-            sampleIdx = round(xPos * state.FS) + 1;
+        if xW >= xLimW(1) && xW <= xLimW(2) && yW >= yLimW(1) && yW <= yLimW(2)
             totalN = length(state.recordedData);
+            sampleIdx = round(xW * state.FS) + 1;
             if sampleIdx >= 1 && sampleIdx <= totalN
                 sampleAmp = state.recordedData(sampleIdx);
-                set(lblCoord, 'String', sprintf('  [TRACKER] Time: %7.4f s | Amp: %+7.4f | Sample: #%d / %d', ...
-                    xPos, sampleAmp, sampleIdx, totalN));
+                set(lblCoord, 'String', sprintf('  [WAVE] Time: %7.4f s | Amp: %+7.4f | Sample: #%d / %d', ...
+                    xW, sampleAmp, sampleIdx, totalN));
+            end
+            return;
+        end
+
+        % Check if cursor is over Frequency Spectrum
+        if isfield(state, 'fAxis') && ~isempty(state.fAxis)
+            cpS = get(axSpec, 'CurrentPoint');
+            xS = cpS(1, 1); yS = cpS(1, 2);
+            xLimS = xlim(axSpec); yLimS = ylim(axSpec);
+
+            if xS >= xLimS(1) && xS <= xLimS(2) && yS >= yLimS(1) && yS <= yLimS(2)
+                [~, nearIdx] = min(abs(state.fAxis - xS));
+                fNear = state.fAxis(nearIdx);
+                pNear = state.P1(nearIdx);
+                set(lblCoord, 'String', sprintf('  [SPECTRUM] Freq: %6.1f Hz | |Amplitude|: %.5f  [Nearest Bin: %.1f Hz, Amp: %.5f]', ...
+                    xS, yS, fNear, pNear));
+                return;
             end
         end
     end
@@ -359,6 +400,15 @@ function record_acoustic_sample()
         if isempty(trialName), trialName = defaultTrial; end
         if isempty(sampleName), sampleName = 'sound_sample_01'; end
 
+        % Read number of experiment repeats for coherent averaging
+        numRepStr = strtrim(get(txtRepeats, 'String'));
+        numRepeats = str2double(numRepStr);
+        if isnan(numRepeats) || numRepeats < 1
+            numRepeats = 1;
+        else
+            numRepeats = round(numRepeats);
+        end
+
         % Prepare target path
         targetDir = fullfile(OUTPUT_ROOT, trialName);
         if ~exist(targetDir, 'dir'), mkdir(targetDir); end
@@ -376,30 +426,94 @@ function record_acoustic_sample()
                     if isempty(stimSig)
                         error('Excitation sound file not found. Run generate_sound_input.m first.');
                     end
-                    set(lblStatus, 'String', 'STATUS: RECORDING & EXCITING PIPE...', ...
-                        'BackgroundColor', [0.75, 0.20, 0.15]);
-                    drawnow;
 
-                    recObj = audiorecorder(FS, BITS, 1, selectedMicID);
-                    player = audioplayer(stimSig, stimFs, BITS, selectedSpkID);
+                    repeatSignals = [];
+                    for rep = 1:numRepeats
+                        if numRepeats > 1
+                            set(lblStatus, 'String', sprintf('STATUS: EXCITING & RECORDING [%d/%d]...', rep, numRepeats), ...
+                                'BackgroundColor', [0.75, 0.20, 0.15]);
+                        else
+                            set(lblStatus, 'String', 'STATUS: RECORDING & EXCITING PIPE...', ...
+                                'BackgroundColor', [0.75, 0.20, 0.15]);
+                        end
+                        drawnow;
 
-                    record(recObj);
-                    pause(0.2);          % 200ms pre-excitation lead-in
-                    playblocking(player); % Synchronous playback through duct
-                    pause(0.5);          % 500ms duct decay / reverberation tail
-                    stop(recObj);
+                        recObj = audiorecorder(FS, BITS, 1, selectedMicID);
+                        player = audioplayer(stimSig, stimFs, BITS, selectedSpkID);
 
-                    recordedData = getaudiodata(recObj);
+                        record(recObj);
+                        pause(0.2);          % 200ms pre-excitation lead-in
+                        playblocking(player); % Synchronous playback through duct
+                        pause(0.5);          % 500ms duct decay / reverberation tail
+                        stop(recObj);
+
+                        singleData = getaudiodata(recObj);
+
+                        if numRepeats > 1
+                            % Save individual raw repeat: {sample}_rep1.wav, _rep2.wav...
+                            repWav = fullfile(targetDir, sprintf('%s_rep%d.wav', sampleName, rep));
+                            audiowrite(repWav, singleData, FS);
+                            fprintf('  [Repeat %d/%d Saved] -> %s\n', rep, numRepeats, repWav);
+
+                            if isempty(repeatSignals)
+                                repeatSignals = zeros(length(singleData), numRepeats);
+                            end
+                            minL = min(size(repeatSignals, 1), length(singleData));
+                            repeatSignals(1:minL, rep) = singleData(1:minL);
+
+                            % Inter-repeat pause for duct reverberation to settle
+                            if rep < numRepeats
+                                set(lblStatus, 'String', sprintf('STATUS: DUCT SETTLING (PAUSE %d/%d)...', rep, numRepeats), ...
+                                    'BackgroundColor', [0.45, 0.35, 0.15]);
+                                drawnow;
+                                pause(0.8);
+                            end
+                        else
+                            recordedData = singleData;
+                        end
+                    end
+
+                    if numRepeats > 1
+                        % Coherent ensemble average across all repeats
+                        recordedData = mean(repeatSignals, 2);
+                        fprintf('[Ensemble Averaging] Successfully averaged %d repeats for %s\n', numRepeats, sampleName);
+                    end
 
                 case 2 % Mode 2: Record Only
                     recTime = 7.0;
-                    set(lblStatus, 'String', sprintf('STATUS: RECORDING ONLY (%.1fs)...', recTime), ...
-                        'BackgroundColor', [0.75, 0.20, 0.15]);
-                    drawnow;
+                    repeatSignals = [];
+                    for rep = 1:numRepeats
+                        if numRepeats > 1
+                            set(lblStatus, 'String', sprintf('STATUS: RECORDING [%d/%d] (%.1fs)...', rep, numRepeats, recTime), ...
+                                'BackgroundColor', [0.75, 0.20, 0.15]);
+                        else
+                            set(lblStatus, 'String', sprintf('STATUS: RECORDING ONLY (%.1fs)...', recTime), ...
+                                'BackgroundColor', [0.75, 0.20, 0.15]);
+                        end
+                        drawnow;
 
-                    recObj = audiorecorder(FS, BITS, 1, selectedMicID);
-                    recordblocking(recObj, recTime);
-                    recordedData = getaudiodata(recObj);
+                        recObj = audiorecorder(FS, BITS, 1, selectedMicID);
+                        recordblocking(recObj, recTime);
+                        singleData = getaudiodata(recObj);
+
+                        if numRepeats > 1
+                            repWav = fullfile(targetDir, sprintf('%s_rep%d.wav', sampleName, rep));
+                            audiowrite(repWav, singleData, FS);
+                            if isempty(repeatSignals)
+                                repeatSignals = zeros(length(singleData), numRepeats);
+                            end
+                            minL = min(size(repeatSignals, 1), length(singleData));
+                            repeatSignals(1:minL, rep) = singleData(1:minL);
+                            if rep < numRepeats, pause(0.8); end
+                        else
+                            recordedData = singleData;
+                        end
+                    end
+
+                    if numRepeats > 1
+                        recordedData = mean(repeatSignals, 2);
+                        fprintf('[Ensemble Averaging] Successfully averaged %d repeats for %s\n', numRepeats, sampleName);
+                    end
 
                 case 3 % Mode 3: Sound Check (Speaker Only)
                     set(lblStatus, 'String', 'STATUS: PLAYING SOUND CHECK...', ...
@@ -434,16 +548,43 @@ function record_acoustic_sample()
             maxDisplay = max(1.05, peakVal * 1.1);
             ylim(axWave, [-maxDisplay, maxDisplay]);
 
-            % Update Frequency Spectrum Display
+            % Update Frequency Spectrum Display (Exact match to AudioAnalyzer.plotFrequency)
             N = length(recordedData);
             Nfft = 2^nextpow2(N);
-            fAxis = (0:Nfft/2) * (FS / Nfft);
-            X = abs(fft(recordedData, Nfft)) / N;
-            X_half = X(1:Nfft/2+1);
-            X_dB = 20 * log10(X_half + eps);
-            set(hSpecLine, 'XData', fAxis, 'YData', X_dB);
+            Y = fft(recordedData, Nfft);
+            P2 = abs(Y / N);
+            P1 = P2(1:floor(Nfft/2) + 1);
+            P1(2:end-1) = 2 * P1(2:end-1);
+            fAxis = FS * (0:(Nfft/2)) / Nfft;
+
+            set(hSpecLine, 'XData', fAxis, 'YData', P1);
             xlim(axSpec, [0, 2200]);
-            ylim(axSpec, [-90, max(max(X_dB) + 5, 0)]);
+
+            % Store in state for coordinate hover tracker
+            state.fAxis = fAxis;
+            state.P1    = P1;
+
+            % Auto-scale Y-axis based on in-band peak amplitude
+            inBand = (fAxis >= 0) & (fAxis <= 2200);
+            maxP1 = max(P1(inBand));
+            if isempty(maxP1) || maxP1 <= 0, maxP1 = 0.01; end
+            ylim(axSpec, [0, maxP1 * 1.25]);
+
+            % Detect and highlight discrete frequency step peaks (300 to 1800 Hz)
+            inStimBand = (fAxis >= 250) & (fAxis <= 1900);
+            fStim = fAxis(inStimBand);
+            pStim = P1(inStimBand);
+
+            minPkHeight = max(maxP1 * 0.15, 1e-4);
+            try
+                minDistSamples = max(round(70 / (fAxis(2) - fAxis(1))), 3);
+                [pks, locs] = findpeaks(pStim, 'MinPeakHeight', minPkHeight, 'MinPeakDistance', minDistSamples);
+                set(hSpecPeaks, 'XData', fStim(locs), 'YData', pks);
+            catch
+                isLocalMax = [false, (pStim(2:end-1) > pStim(1:end-2)) & (pStim(2:end-1) > pStim(3:end)), false];
+                locs = find(isLocalMax & (pStim' > minPkHeight));
+                set(hSpecPeaks, 'XData', fStim(locs), 'YData', pStim(locs));
+            end
 
             % Compute Quality Diagnostics
             rmsVal = rms(recordedData);
@@ -490,8 +631,13 @@ function record_acoustic_sample()
                 actionStr = 'SAVED';
             end
 
-            set(txtDiag, 'String', sprintf('Duration : %.2f s (%d smp)\nPeak Amp : %.4f (%.1f dBFS)\nRMS Level: %.4f (%.1f dBFS)\nClipping : %s\nTarget   : %s', ...
-                durVal, length(recordedData), peakVal, peakDB, rmsVal, rmsDB, clipStr, savedStr));
+            repTag = '';
+            if numRepeats > 1
+                repTag = sprintf('Repeats  : %d (Ensemble Avg)\n', numRepeats);
+            end
+
+            set(txtDiag, 'String', sprintf('Duration : %.2f s (%d smp)\n%sPeak Amp : %.4f (%.1f dBFS)\nRMS Level: %.4f (%.1f dBFS)\nClipping : %s\nTarget   : %s', ...
+                durVal, length(recordedData), repTag, peakVal, peakDB, rmsVal, rmsDB, clipStr, savedStr));
 
             set(btnPlay, 'Enable', 'on');
             set(btnRetake, 'Enable', 'on');
@@ -529,8 +675,11 @@ function record_acoustic_sample()
 
     function onRetakeClick(~, ~)
         state.recordedData = [];
+        state.fAxis = [];
+        state.P1 = [];
         set(hWaveLine, 'XData', [0, 1], 'YData', [0, 0]);
-        set(hSpecLine, 'XData', [0, 1], 'YData', [-90, -90]);
+        set(hSpecLine, 'XData', [0, 1], 'YData', [0, 0]);
+        set(hSpecPeaks, 'XData', nan, 'YData', nan);
         set(hMeterBar, 'YData', -60);
         set(lblClip, 'BackgroundColor', [0.25, 0.08, 0.08], 'ForegroundColor', [0.55, 0.55, 0.55]);
         set(btnPlay, 'Enable', 'off');
@@ -538,6 +687,27 @@ function record_acoustic_sample()
         set(lblStatus, 'String', 'STATUS: CLEARED / READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
         set(txtDiag, 'String', sprintf('Duration : -- s\nPeak Amp : --\nRMS Level: -- dBFS\nClipping : NONE'));
         set(lblCoord, 'String', '  [Coordinate Tracker] Ready for new recording');
+    end
+
+    function onOverlayClick(~, ~)
+        try
+            trialName = strtrim(get(txtTrial, 'String'));
+            if isempty(trialName), trialName = defaultTrial; end
+            taskName = sprintf('compare_%s', trialName);
+
+            set(lblStatus, 'String', 'STATUS: SELECTING FIGURES...', 'BackgroundColor', [0.38, 0.25, 0.55]);
+            drawnow;
+
+            outPath = overlay_figures({}, taskName, true);
+            if ~isempty(outPath)
+                set(lblStatus, 'String', 'STATUS: OVERLAY GENERATED', 'BackgroundColor', [0.12, 0.55, 0.28]);
+            else
+                set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
+            end
+        catch ME
+            errordlg(sprintf('Overlay tool error: %s', ME.message), 'Overlay Failed');
+            set(lblStatus, 'String', 'STATUS: OVERLAY FAILED', 'BackgroundColor', cAccentRed);
+        end
     end
 
     function onRunPipeline(~, ~)
