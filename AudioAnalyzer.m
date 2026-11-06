@@ -24,16 +24,17 @@ classdef AudioAnalyzer < handle
         NFFT double = []                  % FFT length (defaults to nextpow2(L))
         WindowLength (1, 1) double = 1024 % Spectrogram window size
         OverlapLength (1, 1) double = 512 % Spectrogram overlap
-        SaveFormat (1, :) char = 'svg'    % Image format ('svg', 'png', etc.)
-        SaveFig (1, 1) logical = true     % Also save interactive MATLAB .fig for zooming/inspecting
+        SaveFormat (1, :) char = 'fig'    % Primary format
+        SaveFig (1, 1) logical = true     % Save interactive MATLAB .fig for zooming/inspecting
+        SaveImage (1, 1) logical = false  % Do not export static images (.svg/.png) by default
         VisibleFigures (1, 1) logical = false % Display figures or run headless
         DynamicRangeDB (1, 1) double = 45 % Contrast threshold in dB below peak
 
-        % Acoustic duct & dimensionless distance parameters
+        % Acoustic duct parameters
         ModelLength (1, 1) double = 2.0   % Pipe length in meters
         PipeDiameter (1, 1) double = 0.10 % Pipe diameter in meters (100 mm = 0.10 m for ~2028 Hz cut-off)
         SoundSpeed (1, 1) double = 346.0  % Speed of sound in m/s
-        EnableDistance (1, 1) logical = true % Export amplitude-distance plot
+        EnableDistance (1, 1) logical = false % Disabled (x/L reflectometry removed)
         KnownBlockage (1, 1) double = NaN % Dimensionless position of known blockage (e.g. 0.40)
 
         % Signal Alignment Parameters
@@ -58,6 +59,7 @@ classdef AudioAnalyzer < handle
             addParameter(p, 'OverlapLength', obj.OverlapLength, @isnumeric);
             addParameter(p, 'SaveFormat', obj.SaveFormat, @ischar);
             addParameter(p, 'SaveFig', obj.SaveFig, @islogical);
+            addParameter(p, 'SaveImage', obj.SaveImage, @islogical);
             addParameter(p, 'VisibleFigures', obj.VisibleFigures, @islogical);
             addParameter(p, 'DynamicRangeDB', obj.DynamicRangeDB, @isnumeric);
             addParameter(p, 'ModelLength', obj.ModelLength, @(x) isnumeric(x) && x > 0);
@@ -78,6 +80,7 @@ classdef AudioAnalyzer < handle
             obj.OverlapLength = p.Results.OverlapLength;
             obj.SaveFormat = p.Results.SaveFormat;
             obj.SaveFig = p.Results.SaveFig;
+            obj.SaveImage = p.Results.SaveImage;
             obj.VisibleFigures = p.Results.VisibleFigures;
             obj.DynamicRangeDB = p.Results.DynamicRangeDB;
             obj.ModelLength = p.Results.ModelLength;
@@ -168,7 +171,14 @@ classdef AudioAnalyzer < handle
                 end
             end
 
-            plot(tPlot, obj.AudioData, 'b');
+            hLine = plot(tPlot, obj.AudioData, 'b');
+            try
+                hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Time', 'XData', '%+.5f s');
+                hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('Amplitude', 'YData', '%+.5f');
+                sampleIdx = 1:length(tPlot);
+                hLine.DataTipTemplate.DataTipRows(end + 1) = dataTipTextRow('Sample #', sampleIdx, '%d');
+            catch
+            end
             xlabel(xLabelText);
             ylabel('Amplitude');
             
@@ -202,7 +212,14 @@ classdef AudioAnalyzer < handle
             f = obj.SampleRate * (0:(nfft/2)) / nfft;
 
             fig = obj.createFigure();
-            plot(f, P1, 'r');
+            hLine = plot(f, P1, 'r');
+            try
+                hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.1f Hz');
+                hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('|Amplitude|', 'YData', '%.5f');
+                binIdx = 1:length(f);
+                hLine.DataTipTemplate.DataTipRows(end + 1) = dataTipTextRow('FFT Bin', binIdx, '%d');
+            catch
+            end
             xlabel('Frequency (Hz)');
             ylabel('|Amplitude|');
             
@@ -482,18 +499,11 @@ classdef AudioAnalyzer < handle
             end
 
             fs = obj.SampleRate;
-            v  = obj.SoundSpeed;
-            L  = obj.ModelLength;
-            T_pipe = 2 * L / v;
-            maxWinSamples = round(1.15 * T_pipe * fs);
 
             Step_ID          = (1:numSteps)';
             Freq_Hz          = zeros(numSteps, 1);
             Onset_Time_s     = zeros(numSteps, 1);
             Duration_s       = zeros(numSteps, 1);
-            Direct_Peak_Amp  = zeros(numSteps, 1);
-            Echo_Peak_Amp    = zeros(numSteps, 1);
-            Echo_Location_xL = zeros(numSteps, 1);
             Step_RMS         = zeros(numSteps, 1);
             Step_Peak_Amp    = zeros(numSteps, 1);
             Energy_dB        = zeros(numSteps, 1);
@@ -510,31 +520,9 @@ classdef AudioAnalyzer < handle
                 Step_RMS(k)      = round(rms(sigStep), 6);
                 Step_Peak_Amp(k) = round(max(envStep), 6);
                 Energy_dB(k)     = round(20 * log10(Step_RMS(k) + eps), 3);
-
-                % Leading-edge transit window analysis (0 to 1.15 * T_pipe)
-                idxSearchDirect = min(length(env), idx1 + round(0.008 * fs));
-                [directPk, relPk] = max(env(idx1:idxSearchDirect));
-                idxDirect = idx1 + relPk - 1;
-                Direct_Peak_Amp(k) = round(directPk, 6);
-
-                idxWinEnd = min(length(env), idxDirect + maxWinSamples);
-                envTransit = env(idxDirect:idxWinEnd);
-                tTransit   = (0:length(envTransit) - 1)' / fs;
-                xL_vec     = (tTransit * v) / (2 * L);
-
-                % Search reflection echo inside pipe interior x/L in [0.15, 0.90]
-                echoMask = (xL_vec >= 0.15) & (xL_vec <= 0.90);
-                if any(echoMask)
-                    subEnv = envTransit(echoMask);
-                    subXL  = xL_vec(echoMask);
-                    [echoPk, idxEcho] = max(subEnv);
-                    Echo_Peak_Amp(k)    = round(echoPk, 6);
-                    Echo_Location_xL(k) = round(subXL(idxEcho), 4);
-                end
             end
 
             featTable = table(Step_ID, Freq_Hz, Onset_Time_s, Duration_s, ...
-                Direct_Peak_Amp, Echo_Peak_Amp, Echo_Location_xL, ...
                 Step_RMS, Step_Peak_Amp, Energy_dB);
 
             if nargin >= 2 && ~isempty(outputCsvPath)
@@ -676,34 +664,26 @@ classdef AudioAnalyzer < handle
                 fig = figure('Visible', 'off');
             end
             
-            zoom(fig, 'on');
-            set(fig, 'WindowScrollWheelFcn', @obj.onScrollZoom);
-        end
+            % Interactive coordinate status bar at the bottom
+            uicontrol(fig, 'Style', 'text', 'Tag', 'CoordinateStatusBar', ...
+                'String', ' Cursor: Hover over plot to inspect coordinates | Click points for data tips', ...
+                'Units', 'normalized', 'Position', [0.02, 0.005, 0.96, 0.035], ...
+                'HorizontalAlignment', 'left', 'FontName', 'Consolas', 'FontSize', 9, ...
+                'BackgroundColor', [0.94, 0.94, 0.94], 'ForegroundColor', [0.15, 0.15, 0.15]);
 
-        function onScrollZoom(~, src, event)
-            ax = get(src, 'CurrentAxes');
-            if isempty(ax), return; end
-            
-            cp = ax.CurrentPoint(1, 1:2);
-            xLim = ax.XLim;
-            
-            scale = 1.15;
-            if event.VerticalScrollCount < 0
-                factor = 1 / scale;
-            else
-                factor = scale;
-            end
-            
-            newXLim = cp(1) + (xLim - cp(1)) * factor;
-            ax.XLim = newXLim;
+            zoom(fig, 'on');
+            set(fig, 'WindowScrollWheelFcn', @AudioAnalyzer.onScrollZoom);
+            set(fig, 'WindowButtonMotionFcn', @AudioAnalyzer.onMouseMove);
         end
 
         function exportFigure(obj, fig, targetPath)
             [parentDir, baseName, ext] = fileparts(targetPath);
-            if strcmpi(ext, '.svg')
-                saveas(fig, targetPath, 'svg');
-            else
-                saveas(fig, targetPath);
+            if obj.SaveImage
+                if strcmpi(obj.SaveFormat, 'svg') || strcmpi(ext, '.svg')
+                    saveas(fig, fullfile(parentDir, [baseName, '.svg']), 'svg');
+                else
+                    saveas(fig, fullfile(parentDir, [baseName, '.', obj.SaveFormat]));
+                end
             end
 
             if obj.SaveFig
@@ -720,6 +700,65 @@ classdef AudioAnalyzer < handle
             if ~obj.VisibleFigures && isvalid(fig)
                 close(fig);
             end
+        end
+    end
+
+    methods (Static)
+        function onMouseMove(src, ~)
+            ax = get(src, 'CurrentAxes');
+            if isempty(ax), return; end
+            
+            sb = findobj(src, 'Tag', 'CoordinateStatusBar');
+            if isempty(sb), return; end
+
+            cp = ax.CurrentPoint(1, 1:2);
+            x = cp(1);
+            y = cp(2);
+
+            xLim = ax.XLim;
+            yLim = ax.YLim;
+
+            if x >= xLim(1) && x <= xLim(2) && y >= yLim(1) && y <= yLim(2)
+                lines = findobj(ax, 'Type', 'line');
+                if ~isempty(lines) && ~isempty(lines(1).XData)
+                    xData = lines(1).XData;
+                    yData = lines(1).YData;
+                    [~, idxNear] = min(abs(xData - x));
+                    xNear = xData(idxNear);
+                    yNear = yData(idxNear);
+
+                    xLabelStr = string(ax.XLabel.String);
+                    if contains(lower(xLabelStr), 'freq')
+                        sb.String = sprintf(' Cursor: Freq = %.1f Hz | |Amp| = %.5f  [Nearest: %.1f Hz, Amp: %.5f | Bin #%d]', ...
+                            x, y, xNear, yNear, idxNear);
+                    else
+                        sb.String = sprintf(' Cursor: t = %+.5f s | Amp = %+.5f  [Nearest Sample #%d: t = %+.5f s, Amp = %+.5f]', ...
+                            x, y, idxNear, xNear, yNear);
+                    end
+                else
+                    sb.String = sprintf(' Cursor: X = %+.5f | Y = %+.5f', x, y);
+                end
+            else
+                sb.String = ' Cursor: Outside axes boundary';
+            end
+        end
+
+        function onScrollZoom(src, event)
+            ax = get(src, 'CurrentAxes');
+            if isempty(ax), return; end
+            
+            cp = ax.CurrentPoint(1, 1:2);
+            xLim = ax.XLim;
+            
+            scale = 1.15;
+            if event.VerticalScrollCount < 0
+                factor = 1 / scale;
+            else
+                factor = scale;
+            end
+            
+            newXLim = cp(1) + (xLim - cp(1)) * factor;
+            ax.XLim = newXLim;
         end
     end
 end

@@ -1,19 +1,16 @@
 %% Script 2: Per-Frequency Feature Extraction & Handy Visualizer (logged/ -> analyze/)
 % Accepts an array of relative paths to full CSV files logged in /logged.
 % Extracts discrete per-frequency features (e.g., 16 frequency steps) and
-% exports both feature tables and interactive visualizations into /analyze.
+% exports both feature tables and interactive .fig visualizations into /analyze.
 %
 % Extracted Per-Frequency Features (features_by_frequency.csv):
 %   1. Step_ID          : Step index (1..16)
 %   2. Freq_Hz          : Dominant excitation frequency (Hz)
 %   3. Onset_Time_s     : Aligned start time of the tone burst (s)
 %   4. Duration_s       : Active tone duration (s)
-%   5. Direct_Peak_Amp  : Leading-edge direct wave peak amplitude
-%   6. Echo_Peak_Amp    : Reflected wave peak amplitude inside pipe (x/L in [0.15, 0.90])
-%   7. Echo_Location_xL : Dimensionless distance (x/L) of reflection peak
-%   8. Step_RMS         : Steady-state RMS amplitude of the frequency step
-%   9. Step_Peak_Amp    : Maximum envelope amplitude of the frequency step
-%  10. Energy_dB        : Acoustic energy level in dB (20*log10(Step_RMS))
+%   5. Step_RMS         : Steady-state RMS amplitude of the frequency step
+%   6. Step_Peak_Amp    : Maximum envelope amplitude of the frequency step
+%   7. Energy_dB        : Acoustic energy level in dB (20*log10(Step_RMS))
 
 clear; clc;
 
@@ -27,15 +24,12 @@ CSV_FILES = {
 %% 2. Acoustic & Visualization Configuration
 LOGGED_ROOT     = 'logged';
 OUTPUT_ROOT     = 'analyze';
-MODEL_LENGTH    = 2.0;    % Pipe length L (m)
-PIPE_DIAMETER   = 0.10;   % Pipe diameter D (0.10 m = 100 mm -> f_c ~ 2028 Hz)
-SOUND_SPEED     = 346.0;  % Speed of sound (m/s)
 MAX_FREQ        = 2200;   % Upper frequency bound (Hz)
-KNOWN_BLOCKAGE  = 0.40;   % Known blockage location (x/L)
 MIN_STEP_SEP_S  = 0.25;   % Minimum separation (s) between frequency steps
-SAVE_FORMAT     = 'svg';  % Export image format
-SAVE_FIG        = true;   % Save interactive MATLAB .fig files
+SAVE_IMAGE      = false;  % Only save .fig by default (no SVG unless set true)
+SAVE_FIG        = true;   % Save interactive MATLAB .fig files with live coordinate bar
 SHOW_PLOTS      = false;  % Set true to pop up figures interactively
+ENABLE_DISTANCE = false;  % Reflectometry disabled
 
 %% Auto-discover CSV files if CSV_FILES is empty
 if isempty(CSV_FILES)
@@ -53,13 +47,10 @@ end
 %% Initialize OOP Analyzer Engine
 analyzer = AudioAnalyzer('', ...
     'MaxFrequency', MAX_FREQ, ...
-    'SaveFormat', SAVE_FORMAT, ...
     'SaveFig', SAVE_FIG, ...
+    'SaveImage', SAVE_IMAGE, ...
     'VisibleFigures', SHOW_PLOTS, ...
-    'ModelLength', MODEL_LENGTH, ...
-    'PipeDiameter', PIPE_DIAMETER, ...
-    'SoundSpeed', SOUND_SPEED, ...
-    'KnownBlockage', KNOWN_BLOCKAGE, ...
+    'EnableDistance', ENABLE_DISTANCE, ...
     'MinStepSeparation', MIN_STEP_SEP_S);
 
 fprintf('=== Extracting Per-Frequency Features from %d CSV file(s) ===\n', length(CSV_FILES));
@@ -86,21 +77,20 @@ for idx = 1:length(CSV_FILES)
         T_raw = analyzer.loadFromCSV(csvPath);
         featTable = analyzer.extractStepFeatures(featCsvPath, T_raw);
 
-        % Export standard 4-plot visual suite from CSV data
+        % Export interactive .fig visualizations from CSV data
         analyzer.analyzeAndExport(targetDir);
 
         % Print 1-click MATLAB hyperlinks
         ampFig  = strrep(fullfile(targetDir, 'amplitude.fig'), '\', '/');
         freqFig = strrep(fullfile(targetDir, 'frequency.fig'), '\', '/');
         specFig = strrep(fullfile(targetDir, 'spectrogram.fig'), '\', '/');
-        distFig = strrep(fullfile(targetDir, 'amplitude-distance.fig'), '\', '/');
         featCsv = strrep(featCsvPath, '\', '/');
 
-        fprintf('  [OK] %-26s -> %2d freq steps | <a href="matlab:open(''%s'');">[Features CSV]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Amplitude]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Frequency]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Amp-Dist]</a>\n', ...
-            sampleName, height(featTable), featCsv, ampFig, freqFig, specFig, distFig);
+        fprintf('  [OK] %-26s -> %2d freq steps | <a href="matlab:open(''%s'');">[Features CSV]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a> <a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>\n', ...
+            sampleName, height(featTable), featCsv, ampFig, freqFig, specFig);
     catch ME
         fprintf(2, '  [ERROR] Failed on %s: %s\n', csvPath, ME.message);
     end
 end
 
-fprintf('\nDone! Feature tables and visualizations exported to "%s/".\n', OUTPUT_ROOT);
+fprintf('\nDone! Feature tables and interactive .fig files exported to "%s/".\n', OUTPUT_ROOT);
