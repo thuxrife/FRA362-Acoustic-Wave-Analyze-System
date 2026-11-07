@@ -37,11 +37,14 @@ classdef AudioAnalyzer < handle
         EnableDistance (1, 1) logical = false % Disabled (x/L reflectometry removed)
         KnownBlockage (1, 1) double = NaN % Dimensionless position of known blockage (e.g. 0.40)
 
-        % Signal Alignment Parameters
-        AutoAlign (1, 1) logical = true   % Align time axis using the first spike peak as reference
-        PreTriggerSeconds (1, 1) double = 0.2 % Buffer duration (seconds) before first peak to retain
-        ReferencePeakTime double = NaN    % Timestamp (seconds in raw audio) of detected reference peak
+        % Signal Alignment & Stimulus Schedule Parameters
+        AutoAlign (1, 1) logical = true   % Align time axis using matched stimulus comb + first peak
+        PreTriggerSeconds (1, 1) double = 0.2 % Buffer duration (seconds) before first step to retain
+        ReferencePeakTime double = NaN    % Timestamp (seconds in raw audio) of aligned Step 1 origin
         MinStepSeparation (1, 1) double = 0.25 % Minimum time (s) between consecutive frequency step onsets
+        StimulusPath (1, :) char = ''     % Optional path to excitation stimulus .wav track
+        RepeatDataMatrix double = []      % Matrix [M x N] storing aligned [Amp_1, ..., Amp_N]
+        ActiveSchedule struct = struct()  % Resolved step schedule (freqSteps, relOnsets, toneDurs, gapDurs)
     end
 
     methods
@@ -70,6 +73,7 @@ classdef AudioAnalyzer < handle
             addParameter(p, 'AutoAlign', obj.AutoAlign, @islogical);
             addParameter(p, 'PreTriggerSeconds', obj.PreTriggerSeconds, @(x) isnumeric(x) && x >= 0);
             addParameter(p, 'MinStepSeparation', obj.MinStepSeparation, @(x) isnumeric(x) && x > 0);
+            addParameter(p, 'StimulusPath', obj.StimulusPath, @(x) ischar(x) || isstring(x));
             parse(p, varargin{:});
 
             obj.TimeRange = p.Results.TimeRange;
@@ -91,6 +95,7 @@ classdef AudioAnalyzer < handle
             obj.AutoAlign = p.Results.AutoAlign;
             obj.PreTriggerSeconds = p.Results.PreTriggerSeconds;
             obj.MinStepSeparation = p.Results.MinStepSeparation;
+            obj.StimulusPath = char(p.Results.StimulusPath);
 
             if ~isempty(obj.FilePath)
                 obj.loadFile(obj.FilePath);
@@ -98,52 +103,77 @@ classdef AudioAnalyzer < handle
         end
 
         function loadFile(obj, filePath)
-            obj.FilePath = filePath;
-            [data, fs] = audioread(filePath);
-            
-            if size(data, 2) > 1
-                monoData = mean(data, 2);
-            else
-                monoData = data;
+            % Loads a single audio file and aligns it using the stimulus comb matched filter
+            obj.loadRepeatFiles({filePath});
+        end
+
+        function loadRepeatFiles(obj, filePaths)
+            % Loads 1 or N repeat audio files, aligns each repeat to t = 0.0s (Step 1 origin),
+            % stores individual repeats in RepeatDataMatrix, and sets AudioData to the ensemble average.
+            if ischar(filePaths) || isstring(filePaths)
+                filePaths = {char(filePaths)};
             end
+            numReps = length(filePaths);
+            obj.FilePath = filePaths{1};
 
-            obj.SampleRate = fs;
-            obj.NumChannels = size(data, 2);
-
-            % Auto-alignment to first excitation spike peak with pre-trigger buffer
-            if obj.AutoAlign
-                try
-                    env = abs(hilbert(monoData));
-                catch
-                    env = abs(monoData);
-                end
-                
-                threshOnset = 0.08 * max(env);
-                pOnset = find(env > threshOnset, 1);
-                if ~isempty(pOnset)
-                    % Locate the immediate first peak of the leading excitation cycle (within 15 ms)
-                    searchWin = min(length(env), pOnset + round(0.015 * fs));
-                    [~, locs] = findpeaks(env(pOnset:searchWin), 'MinPeakDistance', round(0.002 * fs));
-                    if ~isempty(locs)
-                        idxPeak = pOnset + locs(1) - 1;
-                    else
-                        [~, relPeak] = max(env(pOnset:searchWin));
-                        idxPeak = pOnset + relPeak - 1;
+            % Check for sidecar stimulus metadata file (<sample>_stimulus.txt)
+            stimHint = obj.StimulusPath;
+            if isempty(stimHint)
+                [pDir, baseN, ~] = fileparts(obj.FilePath);
+                cleanBase = regexprep(baseN, '_rep\d+$', '');
+                metaFile = fullfile(pDir, [cleanBase, '_stimulus.txt']);
+                if exist(metaFile, 'file')
+                    try
+                        txt = strtrim(fileread(metaFile));
+                        if ~isempty(txt)
+                            stimHint = txt;
+                        end
+                    catch
                     end
-                    obj.ReferencePeakTime = (idxPeak - 1) / fs;
-                    
-                    % Add pre-trigger seconds back of time
-                    idxStart = max(1, idxPeak - round(obj.PreTriggerSeconds * fs));
-                    monoData = monoData(idxStart:end);
-                else
-                    obj.ReferencePeakTime = NaN;
                 end
-            else
-                obj.ReferencePeakTime = NaN;
             end
 
-            obj.RawAudioData = monoData;
+            alignedCell = cell(1, numReps);
+            refTimes = zeros(1, numReps);
+            fsCommon = 44100;
 
+            for r = 1:numReps
+                [data, fs] = audioread(filePaths{r});
+                if size(data, 2) > 1
+                    monoData = mean(data, 2);
+                else
+                    monoData = data(:);
+                end
+                fsCommon = fs;
+                obj.NumChannels = size(data, 2);
+
+                if r == 1
+                    % Resolve active stimulus schedule on the first file
+                    obj.ActiveSchedule = obj.resolveStimulusSchedule(monoData, fs, stimHint);
+                end
+
+                if obj.AutoAlign
+                    [alignedSig, refTime] = obj.alignSignalWithComb(monoData, fs, obj.ActiveSchedule);
+                    alignedCell{r} = alignedSig(:);
+                    refTimes(r) = refTime;
+                else
+                    alignedCell{r} = monoData(:);
+                    refTimes(r) = NaN;
+                end
+            end
+
+            obj.SampleRate = fsCommon;
+            obj.ReferencePeakTime = refTimes(1);
+
+            % Synchronize lengths across all N repeats
+            minLen = min(cellfun(@length, alignedCell));
+            repMat = zeros(minLen, numReps);
+            for r = 1:numReps
+                repMat(:, r) = alignedCell{r}(1:minLen);
+            end
+
+            obj.RepeatDataMatrix = repMat;
+            obj.RawAudioData = mean(repMat, 2);
             obj.applyTimeWindow();
         end
 
@@ -411,49 +441,91 @@ classdef AudioAnalyzer < handle
         end
 
         function exportRawCSV(obj, csvFilePath)
-            % Exports aligned raw time-series and step metadata to /logged CSV
-            % Columns: Time_s, Amplitude, Envelope, Step_ID, Freq_Hz
+            % Exports aligned time-series and deterministic step metadata to /logged CSV
+            % Schema: Time_s, Step_ID, Freq_Input, Amp_1, [Amp_2, ...], Amp_Avg, Amp_SD
             [parentDir, ~, ~] = fileparts(csvFilePath);
             if ~isempty(parentDir) && ~exist(parentDir, 'dir')
                 mkdir(parentDir);
             end
 
-            try
-                env = abs(hilbert(obj.AudioData));
-            catch
-                env = abs(obj.AudioData);
-            end
-
-            [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps(env);
-            N = length(obj.AudioData);
-            stepIDCol = zeros(N, 1);
-            freqCol   = zeros(N, 1);
+            [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps();
+            M = length(obj.AudioData);
+            stepIDCol    = zeros(M, 1);
+            freqInputCol = zeros(M, 1);
 
             for k = 1:length(stepOnsets)
-                idx1 = stepOnsets(k);
-                idx2 = stepEnds(k);
-                stepIDCol(idx1:idx2) = k;
-                freqCol(idx1:idx2)   = stepFreqs(k);
+                idx1 = max(1, min(M, stepOnsets(k)));
+                idx2 = max(idx1, min(M, stepEnds(k)));
+                stepIDCol(idx1:idx2)    = k;
+                freqInputCol(idx1:idx2) = stepFreqs(k);
             end
 
-            T = table( ...
-                round(obj.TimeVector(:), 6), ...
-                round(obj.AudioData(:), 6), ...
-                round(env(:), 6), ...
-                stepIDCol, ...
-                freqCol, ...
-                'VariableNames', {'Time_s', 'Amplitude', 'Envelope', 'Step_ID', 'Freq_Hz'});
+            % Prepare Repeat Matrix [M x N]
+            if ~isempty(obj.RepeatDataMatrix) && size(obj.RepeatDataMatrix, 1) >= M
+                repMat = obj.RepeatDataMatrix(1:M, :);
+            else
+                repMat = obj.AudioData(:);
+            end
+            numReps = size(repMat, 2);
 
+            ampAvg = mean(repMat, 2);
+            if numReps > 1
+                ampSD = std(repMat, 0, 2);
+            else
+                ampSD = zeros(M, 1);
+            end
+
+            % Build dynamic table columns: Time_s, Step_ID, Freq_Input, Amp_1..N, Amp_Avg, Amp_SD
+            varNames = [{'Time_s', 'Step_ID', 'Freq_Input'}, ...
+                        arrayfun(@(r) sprintf('Amp_%d', r), 1:numReps, 'UniformOutput', false), ...
+                        {'Amp_Avg', 'Amp_SD'}];
+
+            colCells = cell(1, 3 + numReps + 2);
+            colCells{1} = round(obj.TimeVector(:), 6);
+            colCells{2} = stepIDCol;
+            colCells{3} = freqInputCol;
+            for r = 1:numReps
+                colCells{3 + r} = round(repMat(:, r), 6);
+            end
+            colCells{3 + numReps + 1} = round(ampAvg, 6);
+            colCells{3 + numReps + 2} = round(ampSD, 6);
+
+            T = table(colCells{:}, 'VariableNames', varNames);
             writetable(T, csvFilePath);
         end
 
         function T_raw = loadFromCSV(obj, csvFilePath)
-            % Loads a logged raw CSV file back into AudioAnalyzer
+            % Loads a logged CSV file back into AudioAnalyzer
+            % Supports both new schema (Time_s, Step_ID, Freq_Input, Amp_1..N, Amp_Avg, Amp_SD)
+            % and legacy schema (Time_s, Amplitude, Envelope, Step_ID, Freq_Hz)
             obj.FilePath = csvFilePath;
             T_raw = readtable(csvFilePath);
+            colNames = T_raw.Properties.VariableNames;
 
             obj.TimeVector = T_raw.Time_s(:)';
-            obj.AudioData  = T_raw.Amplitude(:);
+
+            if ismember('Amp_Avg', colNames)
+                obj.AudioData = T_raw.Amp_Avg(:);
+            elseif ismember('Amplitude', colNames)
+                obj.AudioData = T_raw.Amplitude(:);
+            elseif ismember('Amp_1', colNames)
+                obj.AudioData = T_raw.Amp_1(:);
+            else
+                error('CSV file "%s" does not contain Amp_Avg, Amplitude, or Amp_1 column.', csvFilePath);
+            end
+
+            % Reconstruct RepeatDataMatrix from Amp_1..Amp_N columns if present
+            ampCols = colNames(~cellfun(@isempty, regexp(colNames, '^Amp_\d+$')));
+            if ~isempty(ampCols)
+                repMat = zeros(height(T_raw), length(ampCols));
+                for r = 1:length(ampCols)
+                    repMat(:, r) = T_raw.(ampCols{r})(:);
+                end
+                obj.RepeatDataMatrix = repMat;
+            else
+                obj.RepeatDataMatrix = obj.AudioData(:);
+            end
+
             obj.RawAudioData = obj.AudioData;
             obj.NumChannels = 1;
 
@@ -470,13 +542,23 @@ classdef AudioAnalyzer < handle
         end
 
         function featTable = extractStepFeatures(obj, outputCsvPath, T_raw)
-            % Extracts per-frequency step features (e.g. 16 frequency steps)
+            % Extracts per-frequency step features across all 16 scheduled steps without dropping bands
+            try
+                env = abs(hilbert(obj.AudioData));
+            catch
+                env = abs(obj.AudioData);
+            end
+
             if nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
-                try
-                    env = T_raw.Envelope(:);
-                catch
-                    env = abs(hilbert(obj.AudioData));
+                colNames = T_raw.Properties.VariableNames;
+                if ismember('Freq_Input', colNames)
+                    freqVec = T_raw.Freq_Input(:);
+                elseif ismember('Freq_Hz', colNames)
+                    freqVec = T_raw.Freq_Hz(:);
+                else
+                    freqVec = zeros(height(T_raw), 1);
                 end
+
                 uniqueSteps = unique(T_raw.Step_ID(T_raw.Step_ID > 0), 'stable');
                 numSteps = length(uniqueSteps);
                 stepOnsets = zeros(numSteps, 1);
@@ -486,33 +568,35 @@ classdef AudioAnalyzer < handle
                     mask = (T_raw.Step_ID == uniqueSteps(k));
                     stepOnsets(k) = find(mask, 1, 'first');
                     stepEnds(k)   = find(mask, 1, 'last');
-                    stepFreqs(k)  = median(T_raw.Freq_Hz(mask));
+                    stepFreqs(k)  = median(freqVec(mask));
                 end
             else
-                try
-                    env = abs(hilbert(obj.AudioData));
-                catch
-                    env = abs(obj.AudioData);
-                end
-                [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps(env);
+                [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps();
                 numSteps = length(stepOnsets);
             end
 
             fs = obj.SampleRate;
+            M  = length(obj.AudioData);
 
-            Step_ID          = (1:numSteps)';
-            Freq_Hz          = zeros(numSteps, 1);
-            Onset_Time_s     = zeros(numSteps, 1);
-            Duration_s       = zeros(numSteps, 1);
-            Step_RMS         = zeros(numSteps, 1);
-            Step_Peak_Amp    = zeros(numSteps, 1);
-            Energy_dB        = zeros(numSteps, 1);
+            Step_ID       = (1:numSteps)';
+            Freq_Hz       = zeros(numSteps, 1);
+            Onset_Time_s  = zeros(numSteps, 1);
+            Duration_s    = zeros(numSteps, 1);
+            Step_RMS      = zeros(numSteps, 1);
+            Step_Peak_Amp = zeros(numSteps, 1);
+            Energy_dB     = zeros(numSteps, 1);
 
             for k = 1:numSteps
-                idx1 = stepOnsets(k);
-                idx2 = stepEnds(k);
-                sigStep = obj.AudioData(idx1:idx2);
-                envStep = env(idx1:idx2);
+                idx1 = max(1, min(M, stepOnsets(k)));
+                idx2 = max(idx1, min(M, stepEnds(k)));
+
+                % For ultra-short impulses (e.g. 2-wave burst = 1..7ms), evaluate acoustic energy
+                % over at least a 25ms pipe transit response window so echo energy is captured
+                minRespSamples = round(0.025 * fs);
+                idxEvalEnd = min(M, max(idx2, idx1 + minRespSamples - 1));
+
+                sigStep = obj.AudioData(idx1:idxEvalEnd);
+                envStep = env(idx1:idxEvalEnd);
 
                 Freq_Hz(k)       = stepFreqs(k);
                 Onset_Time_s(k)  = round(obj.TimeVector(idx1), 4);
@@ -536,79 +620,126 @@ classdef AudioAnalyzer < handle
     end
 
     methods (Access = private)
-        function [stepOnsets, stepEnds, stepFreqs] = detectFrequencySteps(obj, env)
+        function [stepOnsets, stepEnds, stepFreqs] = detectFrequencySteps(obj, ~)
+            % Deterministically maps all 16 frequency steps from the active stimulus schedule
+            % aligned to t = 0.0s so zero frequency steps are ever filtered or cut out.
             fs = obj.SampleRate;
-            smoothEnv = movmean(env, max(1, round(0.008 * fs)));
-            noiseFloor = median(smoothEnv(1:min(length(smoothEnv), round(0.1 * fs))));
-            thresh = max(0.08 * max(smoothEnv), 3.5 * noiseFloor);
+            M  = length(obj.AudioData);
 
-            isAbove = smoothEnv > thresh;
-            diffAbove = [0; diff(isAbove(:))];
-            risingEdges = find(diffAbove == 1);
-
-            minSamples = round(obj.MinStepSeparation * fs);
-            stepOnsets = [];
-            for idx = risingEdges'
-                if isempty(stepOnsets) || (idx - stepOnsets(end) >= minSamples)
-                    stepOnsets(end + 1, 1) = idx; %#ok<AGROW>
-                end
+            if isempty(obj.ActiveSchedule) || ~isfield(obj.ActiveSchedule, 'freqSteps')
+                obj.ActiveSchedule = obj.resolveStimulusSchedule(obj.AudioData, fs, obj.StimulusPath);
             end
 
-            if isempty(stepOnsets)
-                stepOnsets = 1;
+            sched = obj.ActiveSchedule;
+            numSteps = length(sched.freqSteps);
+
+            % Find sample index corresponding to t = 0.0s
+            if ~isempty(obj.TimeVector)
+                [~, idxZero] = min(abs(obj.TimeVector - 0.0));
+            elseif obj.AutoAlign
+                idxZero = round(obj.PreTriggerSeconds * fs) + 1;
+            else
+                idxZero = 1;
             end
 
-            numSteps = length(stepOnsets);
-            stepEnds  = zeros(numSteps, 1);
-            stepFreqs = zeros(numSteps, 1);
+            stepOnsets = zeros(numSteps, 1);
+            stepEnds   = zeros(numSteps, 1);
+            stepFreqs  = sched.freqSteps(:);
 
             for k = 1:numSteps
-                idx1 = stepOnsets(k);
-                if k < numSteps
-                    maxIdx = stepOnsets(k + 1) - 1;
-                else
-                    maxIdx = length(smoothEnv);
-                end
+                t1 = sched.relOnsets(k);
+                t2 = t1 + sched.toneDurs(k);
 
-                % Find where step tone drops back below threshold
-                subBelow = find(~isAbove(idx1:maxIdx), 1, 'first');
-                if ~isempty(subBelow) && subBelow > round(0.02 * fs)
-                    idx2 = idx1 + subBelow - 1;
-                else
-                    idx2 = min(maxIdx, idx1 + round(0.8 * (maxIdx - idx1)));
-                end
-                stepEnds(k) = max(idx1 + 1, idx2);
+                idx1 = idxZero + round(t1 * fs);
+                idx2 = idxZero + round(t2 * fs) - 1;
 
-                % Estimate dominant excitation frequency via FFT
-                seg = obj.AudioData(idx1:stepEnds(k));
-                Lseg = length(seg);
-                nfft = 2^nextpow2(max(1024, Lseg));
-                Y = abs(fft(seg, nfft));
-                P1 = Y(1:floor(nfft/2) + 1);
-                fVec = fs * (0:(nfft/2)) / nfft;
-                validF = (fVec >= 250) & (fVec <= 2500);
-                if any(validF)
-                    subP = P1(validF);
-                    subF = fVec(validF);
-                    [~, iMax] = max(subP);
-                    rawF = subF(iMax);
-                    if abs(rawF - round(rawF / 100) * 100) <= 22
-                        stepFreqs(k) = round(rawF / 100) * 100;
-                    else
-                        stepFreqs(k) = round(rawF);
-                    end
+                idx1 = max(1, min(M, idx1));
+                idx2 = max(idx1, min(M, idx2));
+
+                stepOnsets(k) = idx1;
+                stepEnds(k)   = idx2;
+            end
+        end
+
+        function sched = resolveStimulusSchedule(~, monoData, fs, stimHint)
+            % Builds candidate stimulus schedules and selects the active one via hint or comb correlation
+            freqs = 300:100:1800;
+            nSteps = length(freqs);
+
+            % Candidate 1: 150ms tone + 250ms gap (0.40s step cycle)
+            s1 = struct();
+            s1.name      = '150ms_250ms';
+            s1.freqSteps = freqs;
+            s1.toneDurs  = repmat(0.15, 1, nSteps);
+            s1.gapDurs   = repmat(0.25, 1, nSteps);
+            s1.relOnsets = (0:nSteps-1) * 0.40;
+
+            % Candidate 2: 2-wave impulse (2/f_k) + 0.50s fixed gap
+            s2 = struct();
+            s2.name      = '2waves_500ms_gap';
+            s2.freqSteps = freqs;
+            s2.toneDurs  = 2 ./ freqs;
+            s2.gapDurs   = repmat(0.50, 1, nSteps);
+            s2.relOnsets = [0, cumsum(s2.toneDurs(1:end-1) + s2.gapDurs(1:end-1))];
+
+            % Candidate 3: Legacy 2.0s tone + 1.0s gap (3.0s step cycle)
+            s3 = struct();
+            s3.name      = '2s_1s';
+            s3.freqSteps = freqs;
+            s3.toneDurs  = repmat(2.0, 1, nSteps);
+            s3.gapDurs   = repmat(1.0, 1, nSteps);
+            s3.relOnsets = (0:nSteps-1) * 3.0;
+
+            if ~isempty(stimHint)
+                hintLower = lower(char(stimHint));
+                if contains(hintLower, '2wave') || contains(hintLower, '500ms')
+                    sched = s2;
+                    return;
+                elseif contains(hintLower, '150ms') || contains(hintLower, '250ms')
+                    sched = s1;
+                    return;
+                elseif contains(hintLower, '2s_1s')
+                    sched = s3;
+                    return;
                 end
             end
 
-            % Filter out spurious low-energy reverb tails between steps
-            stepRmsVec = zeros(numSteps, 1);
-            for k = 1:numSteps
-                stepRmsVec(k) = rms(obj.AudioData(stepOnsets(k):stepEnds(k)));
+            % Auto-detect from recording duration & comb correlation
+            recDur = length(monoData) / fs;
+            if recDur > 25.0
+                sched = s3;
+                return;
             end
-            validSteps = (stepRmsVec >= 0.20 * median(stepRmsVec)) & (stepFreqs >= 250);
-            stepOnsets = stepOnsets(validSteps);
-            stepEnds   = stepEnds(validSteps);
-            stepFreqs  = stepFreqs(validSteps);
+
+            % Compare Comb Correlation Score between s1 (150ms/250ms) and s2 (2waves/500ms)
+            [~, score1] = AudioAnalyzer.computeCombOrigin(monoData, fs, s1);
+            [~, score2] = AudioAnalyzer.computeCombOrigin(monoData, fs, s2);
+
+            if score2 > score1 * 1.05
+                sched = s2;
+            else
+                sched = s1;
+            end
+        end
+
+        function [alignedSig, refPeakTime] = alignSignalWithComb(obj, monoData, fs, sched)
+            % Aligns the recording to the true start of Step 1 (300 Hz) at t = 0.000s
+            % using 16-step narrowband comb correlation + high-SNR step back-projection.
+            [tOrigin, ~] = AudioAnalyzer.computeCombOrigin(monoData, fs, sched);
+            refPeakTime = tOrigin;
+
+            idxOrigin = max(1, round(tOrigin * fs) + 1);
+            preSamples = round(obj.PreTriggerSeconds * fs);
+
+            idxStart = idxOrigin - preSamples;
+            if idxStart >= 1
+                alignedSig = monoData(idxStart:end);
+            else
+                % Pad leading baseline so t = 0.000s is strictly at sample index (preSamples + 1)
+                nPad = 1 - idxStart;
+                baselineVal = median(monoData(1:min(length(monoData), max(1, idxOrigin))));
+                alignedSig = [repmat(baselineVal, nPad, 1); monoData(:)];
+            end
         end
         function header = formatTitle(obj, defaultTitle)
             if ~isempty(obj.TitlePrefix)
@@ -689,6 +820,7 @@ classdef AudioAnalyzer < handle
             if obj.SaveFig
                 figPath = fullfile(parentDir, [baseName, '.fig']);
                 set(fig, 'Visible', 'on');
+                set(fig, 'CreateFcn', 'set(gcbo, ''Visible'', ''on'')');
                 savefig(fig, figPath);
                 if ~obj.VisibleFigures
                     set(fig, 'Visible', 'off');
@@ -759,6 +891,111 @@ classdef AudioAnalyzer < handle
             
             newXLim = cp(1) + (xLim - cp(1)) * factor;
             ax.XLim = newXLim;
+        end
+
+        function [tOrigin, maxScore] = computeCombOrigin(monoData, fs, sched)
+            % Multi-step comb cross-correlation + high-SNR back-projection
+            % Finds the exact time tOrigin (seconds) of Step 1 (300 Hz) even if
+            % low frequencies (300-700 Hz) are heavily attenuated by pipe blockage.
+            N = length(monoData);
+            if N < 10
+                tOrigin = 0;
+                maxScore = 0;
+                return;
+            end
+
+            winSmooth = max(1, round(0.003 * fs));
+            env = movmean(abs(monoData(:)), winSmooth);
+
+            % Coarse envelope at ~500 Hz (2 ms step) for fast 16-step comb matching
+            stepSamples = max(1, round(0.002 * fs));
+            envCoarse = env(1:stepSamples:end);
+            fsCoarse = fs / stepSamples;
+
+            maxEnv = max(envCoarse);
+            if maxEnv <= eps
+                tOrigin = 0;
+                maxScore = 0;
+                return;
+            end
+            envNorm = envCoarse / maxEnv;
+
+            numSteps = length(sched.freqSteps);
+            totalSpan = sched.relOnsets(end) + max(sched.toneDurs(end), 0.030) + 0.10;
+            nComb = max(10, round(totalSpan * fsCoarse));
+            combTemplate = -0.35 * ones(nComb, 1);
+
+            for k = 1:numSteps
+                effDur = max(sched.toneDurs(k), 0.025);
+                i1 = max(1, round(sched.relOnsets(k) * fsCoarse) + 1);
+                i2 = min(nComb, round((sched.relOnsets(k) + effDur) * fsCoarse));
+                if i2 >= i1
+                    combTemplate(i1:i2) = 1.0;
+                end
+            end
+
+            maxLag = min(length(envNorm) - 1, round(3.0 * fsCoarse));
+            bestScore = -inf;
+            bestLag = 0;
+
+            for lag = 0:maxLag
+                segLen = min(nComb, length(envNorm) - lag);
+                if segLen < round(0.25 * nComb)
+                    break;
+                end
+                sc = sum(envNorm(lag+1 : lag+segLen) .* combTemplate(1:segLen)) / segLen;
+                if sc > bestScore
+                    bestScore = sc;
+                    bestLag = lag;
+                end
+            end
+
+            tCoarse = bestLag / fsCoarse;
+            maxScore = bestScore;
+
+            % Sub-millisecond refinement via back-projection from high-SNR steps
+            t0Est    = nan(numSteps, 1);
+            stepSNR  = zeros(numSteps, 1);
+            stepPeak = zeros(numSteps, 1);
+
+            for k = 1:numSteps
+                tExp = tCoarse + sched.relOnsets(k);
+                effDur = max(sched.toneDurs(k), 0.025);
+
+                wStart = max(1, round((tExp - 0.045) * fs) + 1);
+                wEnd   = min(N, round((tExp + effDur + 0.030) * fs));
+                if wEnd <= wStart
+                    continue;
+                end
+
+                gStart = max(1, round((tExp - 0.120) * fs) + 1);
+                gEnd   = max(gStart, round((tExp - 0.050) * fs));
+
+                pkVal = max(env(wStart:wEnd));
+                nfVal = median(env(gStart:gEnd)) + 1e-6;
+
+                stepPeak(k) = pkVal;
+                stepSNR(k)  = pkVal / nfVal;
+
+                % Locate leading edge of step k (25% of step envelope peak)
+                relCross = find(env(wStart:wEnd) >= 0.25 * pkVal, 1, 'first');
+                if ~isempty(relCross)
+                    idxEdge = wStart + relCross - 1;
+                    idxSearchEnd = min(N, idxEdge + round(0.0035 * fs));
+                    [~, relPk] = max(abs(monoData(idxEdge:idxSearchEnd)));
+                    idxStepPeak = idxEdge + relPk - 1;
+                    t0Est(k) = (idxStepPeak - 1) / fs - sched.relOnsets(k);
+                end
+            end
+
+            maxStepPk = max(stepPeak);
+            validMask = ~isnan(t0Est) & (stepSNR >= 2.5) & (stepPeak >= 0.08 * maxStepPk);
+
+            if any(validMask)
+                tOrigin = max(0, median(t0Est(validMask)));
+            else
+                tOrigin = max(0, tCoarse);
+            end
         end
     end
 end

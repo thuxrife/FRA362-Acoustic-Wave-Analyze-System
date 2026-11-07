@@ -373,6 +373,9 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
     end
 
     %% 5. Save Overlay Figure to analyze/overlay/
+    % Ensure figure is visible and has a CreateFcn hook so double-clicking the .fig always opens visibly
+    set(fig, 'Visible', 'on');
+    set(fig, 'CreateFcn', 'set(gcbo, ''Visible'', ''on'')');
     savefig(fig, outFigPath);
     fprintf('\n[SAVED] Overlaid figure successfully written to:\n  %s\n', outFigPath);
 
@@ -380,9 +383,7 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
     linkDir = sprintf('<a href="matlab:winopen(''%s'');">[Open Folder]</a>', strrep(targetDir, '\', '/'));
     fprintf('1-Click Actions: %s | %s\n\n', linkFig, linkDir);
 
-    if showPlot
-        set(fig, 'Visible', 'on');
-    else
+    if ~showPlot
         close(fig);
     end
 end

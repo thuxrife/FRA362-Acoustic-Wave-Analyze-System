@@ -21,19 +21,21 @@ The workflow is streamlined into **two core scripts** (plus an interactive compa
 
 ```text
 FRA362-Acoustic-Wave-Analyze-System/
-├── sound_input/                                  <-- Pure speaker excitation tracks
-│   ├── stepped_tones_100mm_150ms_250ms.wav       <-- Default 16-step track (300-1800 Hz, 6.4s)
+├── sound_input/                                  <-- Pure speaker excitation tracks (selectable in GUI)
+│   ├── stepped_tones_100mm_2waves_500ms_gap.wav  <-- 2-wave impulse per freq (2/f_k) + 0.50s gap (8.04s)
+│   ├── stepped_tones_100mm_150ms_250ms.wav       <-- 16-step steady burst (150ms tone + 250ms gap, 6.40s)
 │   └── stepped_tones_100mm_2s_1s.wav             <-- Legacy 17-step track (300-1900 Hz, 51s)
 │
 ├── mp3/                                          <-- Raw recorded audio from experiments
 │   └── {trial_name}/
 │       ├── {sample_name}.wav                     <-- Master / ensemble-averaged recording
 │       ├── {sample_name}_rep1.wav                <-- Individual raw repeat 1 (when Repeats > 1)
-│       └── {sample_name}_rep2.wav                <-- Individual raw repeat 2 (when Repeats > 1)
+│       ├── {sample_name}_rep2.wav                <-- Individual raw repeat 2 (when Repeats > 1)
+│       └── {sample_name}_stimulus.txt            <-- Active stimulus track reference
 │
 ├── logged/                                       <-- Stage 1: Time-aligned & step-tagged CSVs
 │   └── {trial_name}/
-│       └── {sample_name}.csv                     <-- Columns: Time_s, Amplitude, Envelope, Step_ID, Freq_Hz
+│       └── {sample_name}.csv                     <-- Time_s, Step_ID, Freq_Input, Amp_1..N, Amp_Avg, Amp_SD
 │
 ├── analyze/                                      <-- Stage 2: Extracted features & interactive .fig plots
 │   ├── {trial_name}/
@@ -78,12 +80,11 @@ record_acoustic_sample
    - **Mode 1: Automated Test (Play + Record)** *(Recommended)* — Synchronously plays the 16-step tone burst (`300 Hz` to `1800 Hz`, `150 ms` tone + `250 ms` gap) through the speaker while recording the pipe response.
    - **Mode 2: Record Only** — Records microphone input for 7.0 seconds using an external sound source.
    - **Mode 3: Sound Check (Speaker Play Only)** — Plays the excitation track without recording to verify speaker volume.
-3. **Configure Trial, Sample Name & Repeats**:
+3. **Configure Trial, Sample Name, Repeats & Stimulus Input**:
    - **Trial Folder**: Group name inside `mp3/` (defaults to `YYYY-MM-DD-sound-sample`).
    - **Sample Name**: Condition identifier (e.g., `sound_sample_01_sand-1-piece-front`). Re-recording with the same name automatically overwrites/replaces the previous file.
-   - **Repeats ($N$)**: Set $N = 1$ for a single capture, or $N > 1$ (e.g., `3` or `5`) to run $N$ consecutive repeats automatically. When $N > 1$:
-     - Individual raw runs are saved as `{sample_name}_rep1.wav`, `_rep2.wav`, etc.
-     - The coherent ensemble average $\bar{s}(t) = \frac{1}{N}\sum_{k=1}^N s_k(t)$ is saved to `{sample_name}.wav`, suppressing uncorrelated background noise by $\sqrt{N}$.
+   - **Repeats ($N$)**: Set $N = 1$ for a single capture, or $N > 1$ (e.g., `3` or `5`) to run $N$ consecutive repeats automatically.
+   - **Stimulus Input Dropdown & Browse**: Select any excitation track from `sound_input/` (such as `stepped_tones_100mm_2waves_500ms_gap.wav` or `stepped_tones_100mm_150ms_250ms.wav`) or click **`Browse...`** to pick any custom `.wav`/`.mp3` file at any time.
 4. **Inspect the Live Monitor**:
    - **Top Graph (Oscilloscope)**: Displays raw time-domain waveform $s(t)$.
    - **Bottom Graph (Frequency Spectrum)**: Displays single-sided linear FFT `|Amplitude|` ($0 - 2200\text{ Hz}$) with golden peak markers on the 16 excitation frequencies and the plane-wave cut-off guide ($2028\text{ Hz}$).
@@ -147,13 +148,18 @@ overlay_figures('analyze/trial/sampleA/spectrogram.fig, analyze/trial/sampleB/sp
 ## Exported CSV Data Schemas
 
 ### 1. Calibrated Time-Series Log (`logged/{trial}/{sample}.csv`)
+Uses a unified column structure for both single ($N=1$) and multi-repeat ($N>1$) experiments (with `Envelope` removed):
+- **Single Experiment ($N=1$)**: `Time_s, Step_ID, Freq_Input, Amp_1, Amp_Avg, Amp_SD`
+- **Repeats Experiment ($N>1$)**: `Time_s, Step_ID, Freq_Input, Amp_1, Amp_2, ..., Amp_N, Amp_Avg, Amp_SD`
+
 | Column | Name | Description |
 | :--- | :--- | :--- |
-| **1** | `Time_s` | Calibrated time in seconds (starts at $-0.200\text{ s}$, 1st excitation peak at $0.000\text{ s}$) |
-| **2** | `Amplitude` | Raw mono acoustic sound pressure $s(t) \in [-1, 1]$ |
-| **3** | `Envelope` | Instantaneous Hilbert amplitude envelope $E(t) = \|s(t) + j\mathcal{H}\{s(t)\}\|$ |
-| **4** | `Step_ID` | Integer frequency step index (`0` = silence/baseline, `1..16` = active tone step) |
-| **5** | `Freq_Hz` | Dominant excitation frequency in Hz (`0` during silence intervals) |
+| **1** | `Time_s` | Calibrated time in seconds (starts at $-0.200\text{ s}$, Step 1 @ $300\text{ Hz}$ anchored at $0.000\text{ s}$ via 16-step comb correlation) |
+| **2** | `Step_ID` | Integer frequency step index (`0` = silence gap/baseline, `1..16` = active frequency step) |
+| **3** | `Freq_Input` | Scheduled input excitation frequency in Hz (`300` to `1800 Hz` during steps, `0` during gaps) |
+| **4..3+N** | `Amp_1 .. Amp_N` | Aligned mono acoustic waveform $s_r(t)$ for each repeat $r = 1 \dots N$ |
+| **4+N** | `Amp_Avg` | Ensemble mean waveform across repeats: $\bar{s}(t) = \frac{1}{N}\sum_{r=1}^N s_r(t)$ |
+| **5+N** | `Amp_SD` | Sample standard deviation across repeats at each timestamp ($0$ when $N=1$) |
 
 ### 2. Per-Frequency Feature Table (`analyze/{trial}/{sample}/features_by_frequency.csv`)
 | Column | Name | Description |

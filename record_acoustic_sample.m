@@ -9,19 +9,18 @@ function record_acoustic_sample()
     %% 1. Default Configuration & Audio Discovery
     FS               = 44100;
     BITS             = 16;
-    DEFAULT_STIMULUS = 'sound_input/stepped_tones_100mm_150ms_250ms.wav';
-    LEGACY_STIMULUS  = 'sound_input/stepped_tones_100mm_2s_1s.wav';
+    STIM_DIR         = 'sound_input';
+    DEFAULT_STIMULUS = 'sound_input/stepped_tones_100mm_2waves_500ms_gap.wav';
+    FALLBACK_STIM    = 'sound_input/stepped_tones_100mm_150ms_250ms.wav';
     OUTPUT_ROOT      = 'mp3';
 
-    % Determine stimulus file
-    stimFile = DEFAULT_STIMULUS;
-    if ~exist(stimFile, 'file') && exist(LEGACY_STIMULUS, 'file')
-        stimFile = LEGACY_STIMULUS;
-    end
+    % Discover available stimulus files in sound_input/
+    [stimPaths, stimNames] = scanStimulusFolder(STIM_DIR, DEFAULT_STIMULUS, FALLBACK_STIM);
+    stimFile = stimPaths{1};
     stimDuration = 0;
     stimSig = [];
     stimFs  = FS;
-    if exist(stimFile, 'file')
+    if ~isempty(stimFile) && exist(stimFile, 'file')
         [stimSig, stimFs] = audioread(stimFile);
         stimDuration = length(stimSig) / stimFs;
     end
@@ -156,31 +155,45 @@ function record_acoustic_sample()
         'ForegroundColor', cTextPri, 'FontSize', 9, 'HorizontalAlignment', 'center', ...
         'Tooltip', 'Number of trials to repeat and ensemble-average for acoustic noise reduction');
 
-    % Stimulus Track Info
-    [~, stimBase, stimExt] = fileparts(stimFile);
-    uicontrol('Parent', pnlCtrl, 'Style', 'text', ...
-        'String', sprintf('Stimulus: %s%s (%.1fs, 16 steps)', stimBase, stimExt, stimDuration), ...
-        'Position', [15, 336, 295, 22], 'HorizontalAlignment', 'left', ...
-        'BackgroundColor', cPanelBg, 'ForegroundColor', [0.45, 0.75, 0.95], 'FontSize', 8);
+    % Selectable Stimulus Track Input (Dropdown + Browse Button)
+    lblStim = uicontrol('Parent', pnlCtrl, 'Style', 'text', ...
+        'String', sprintf('Stimulus Input (%.2fs, 16 steps):', stimDuration), ...
+        'Position', [15, 340, 295, 18], 'HorizontalAlignment', 'left', ...
+        'BackgroundColor', cPanelBg, 'ForegroundColor', [0.45, 0.75, 0.95], 'FontSize', 8, 'FontWeight', 'bold');
+
+    popStim = uicontrol('Parent', pnlCtrl, 'Style', 'popupmenu', ...
+        'String', stimNames, ...
+        'Position', [15, 314, 222, 25], 'BackgroundColor', cControlBg, ...
+        'ForegroundColor', cTextPri, 'FontSize', 8, 'Value', 1, ...
+        'Tooltip', 'Select excitation sound file from sound_input/ at any time', ...
+        'Callback', @onStimulusChange);
+
+    btnBrowseStim = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+        'String', 'Browse...', ...
+        'Position', [242, 314, 68, 25], ...
+        'BackgroundColor', [0.22, 0.28, 0.36], 'ForegroundColor', cTextPri, ...
+        'FontSize', 8, ...
+        'Tooltip', 'Browse for a custom .wav or .mp3 stimulus file', ...
+        'Callback', @onBrowseStimulus);
 
     % Action Buttons
     btnRecord = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'START RECORDING / TEST', ...
-        'Position', [15, 284, 295, 44], ...
+        'Position', [15, 266, 295, 42], ...
         'BackgroundColor', cAccentGrn, 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 10, 'FontWeight', 'bold', ...
         'Callback', @onRecordClick);
 
     btnPlay = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'Play Recorded Audio', ...
-        'Position', [15, 244, 142, 34], ...
+        'Position', [15, 228, 142, 32], ...
         'BackgroundColor', cControlBg, 'ForegroundColor', cTextPri, ...
         'FontSize', 9, 'Enable', 'off', ...
         'Callback', @onPlayRecorded);
 
     btnRetake = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'Clear / Retake', ...
-        'Position', [168, 244, 142, 34], ...
+        'Position', [168, 228, 142, 32], ...
         'BackgroundColor', cControlBg, 'ForegroundColor', cTextPri, ...
         'FontSize', 9, 'Enable', 'off', ...
         'Callback', @onRetakeClick);
@@ -188,7 +201,7 @@ function record_acoustic_sample()
     % Status Readout Badge
     lblStatus = uicontrol('Parent', pnlCtrl, 'Style', 'text', ...
         'String', 'STATUS: READY', ...
-        'Position', [15, 200, 295, 36], ...
+        'Position', [15, 188, 295, 34], ...
         'BackgroundColor', [0.18, 0.20, 0.24], ...
         'ForegroundColor', cTextPri, ...
         'FontSize', 9, 'FontWeight', 'bold');
@@ -196,7 +209,7 @@ function record_acoustic_sample()
     % Numerical Diagnostics Box
     txtDiag = uicontrol('Parent', pnlCtrl, 'Style', 'text', ...
         'String', sprintf('Duration : -- s\nPeak Amp : --\nRMS Level: -- dBFS\nClipping : NONE'), ...
-        'Position', [15, 114, 295, 80], ...
+        'Position', [15, 106, 295, 76], ...
         'BackgroundColor', cControlBg, ...
         'ForegroundColor', cTextSec, ...
         'FontSize', 9, 'HorizontalAlignment', 'left');
@@ -204,7 +217,7 @@ function record_acoustic_sample()
     % Figure Overlay Comparison Tool Button
     btnOverlay = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'OVERLAY COMPARISON TOOL', ...
-        'Position', [15, 68, 295, 36], ...
+        'Position', [15, 64, 295, 36], ...
         'BackgroundColor', [0.38, 0.25, 0.55], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
         'Callback', @onOverlayClick);
@@ -212,7 +225,7 @@ function record_acoustic_sample()
     % 1-Click Pipeline Button
     btnPipeline = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'RUN MASTER PIPELINE (main.m)', ...
-        'Position', [15, 18, 295, 44], ...
+        'Position', [15, 14, 295, 44], ...
         'BackgroundColor', [0.18, 0.45, 0.78], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
         'Callback', @onRunPipeline);
@@ -368,11 +381,68 @@ function record_acoustic_sample()
             set(popSpk, 'String', spkNames, 'Value', min(max(oldSpk, 1), length(devs.output)));
         end
 
+        % Refresh Stimulus Input Dropdown from sound_input/
+        [stimPaths, stimNames] = scanStimulusFolder(STIM_DIR, DEFAULT_STIMULUS, FALLBACK_STIM);
+        oldStim = get(popStim, 'Value');
+        newStimIdx = min(max(oldStim, 1), length(stimPaths));
+        set(popStim, 'String', stimNames, 'Value', newStimIdx);
+        loadSelectedStimulus(stimPaths{newStimIdx});
+
         nMic = length(devs.input);
         nSpk = length(devs.output);
         set(lblStatus, 'String', sprintf('RESCANNED: %d MIC(S), %d SPK(S)', nMic, nSpk), ...
             'BackgroundColor', [0.12, 0.45, 0.35]);
-        fprintf('[Hardware Rescan] Detected %d microphone(s) and %d speaker(s).\n', nMic, nSpk);
+        fprintf('[Hardware Rescan] Detected %d microphone(s), %d speaker(s), and %d stimulus track(s).\n', ...
+            nMic, nSpk, length(stimPaths));
+    end
+
+    function onStimulusChange(~, ~)
+        idx = get(popStim, 'Value');
+        if idx >= 1 && idx <= length(stimPaths) && ~isempty(stimPaths{idx})
+            loadSelectedStimulus(stimPaths{idx});
+        end
+    end
+
+    function onBrowseStimulus(~, ~)
+        [fName, fDir] = uigetfile({'*.wav;*.mp3', 'Audio Files (*.wav, *.mp3)'}, ...
+            'Select Custom Stimulus Sound File', STIM_DIR);
+        if isequal(fName, 0)
+            return;
+        end
+        chosenPath = fullfile(fDir, fName);
+        % Prepend or select in dropdown
+        matchIdx = find(strcmpi(stimPaths, chosenPath), 1);
+        if isempty(matchIdx)
+            stimPaths = [{chosenPath}, stimPaths];
+            stimNames = [{fName}, stimNames];
+            set(popStim, 'String', stimNames, 'Value', 1);
+        else
+            set(popStim, 'Value', matchIdx);
+        end
+        loadSelectedStimulus(chosenPath);
+    end
+
+    function loadSelectedStimulus(targetPath)
+        if isempty(targetPath) || ~exist(targetPath, 'file')
+            return;
+        end
+        try
+            [sSig, sFs] = audioread(targetPath);
+            if size(sSig, 2) > 1
+                sSig = mean(sSig, 2);
+            end
+            stimFile     = targetPath;
+            stimSig      = sSig;
+            stimFs       = sFs;
+            stimDuration = length(stimSig) / stimFs;
+            [~, sBase, sExt] = fileparts(stimFile);
+            set(lblStim, 'String', sprintf('Stimulus Input (%.2fs, 16 steps):', stimDuration));
+            set(lblStatus, 'String', sprintf('STIMULUS: %s%s (%.2fs)', sBase, sExt, stimDuration), ...
+                'BackgroundColor', [0.16, 0.32, 0.48]);
+            fprintf('[Stimulus Selected] %s (Duration: %.2fs, Fs: %d Hz)\n', stimFile, stimDuration, stimFs);
+        catch ME
+            errordlg(sprintf('Failed to load stimulus file:\n%s', ME.message), 'Stimulus Error');
+        end
     end
 
     function onRecordClick(~, ~)
@@ -427,6 +497,7 @@ function record_acoustic_sample()
                         error('Excitation sound file not found. Run generate_sound_input.m first.');
                     end
 
+                    repWavList = cell(1, numRepeats);
                     repeatSignals = [];
                     for rep = 1:numRepeats
                         if numRepeats > 1
@@ -453,6 +524,7 @@ function record_acoustic_sample()
                             % Save individual raw repeat: {sample}_rep1.wav, _rep2.wav...
                             repWav = fullfile(targetDir, sprintf('%s_rep%d.wav', sampleName, rep));
                             audiowrite(repWav, singleData, FS);
+                            repWavList{rep} = repWav;
                             fprintf('  [Repeat %d/%d Saved] -> %s\n', rep, numRepeats, repWav);
 
                             if isempty(repeatSignals)
@@ -474,13 +546,20 @@ function record_acoustic_sample()
                     end
 
                     if numRepeats > 1
-                        % Coherent ensemble average across all repeats
-                        recordedData = mean(repeatSignals, 2);
-                        fprintf('[Ensemble Averaging] Successfully averaged %d repeats for %s\n', numRepeats, sampleName);
+                        % Time-align all repeats to Step 1 (t = 0.000s) before coherent averaging
+                        try
+                            aligner = AudioAnalyzer('', 'AutoAlign', true, 'PreTriggerSeconds', 0.2, 'StimulusPath', stimFile);
+                            aligner.loadRepeatFiles(repWavList);
+                            recordedData = aligner.AudioData;
+                        catch
+                            recordedData = mean(repeatSignals, 2);
+                        end
+                        fprintf('[Ensemble Averaging] Time-aligned and averaged %d repeats for %s\n', numRepeats, sampleName);
                     end
 
                 case 2 % Mode 2: Record Only
-                    recTime = 7.0;
+                    recTime = max(7.0, round(stimDuration + 1.0, 1));
+                    repWavList = cell(1, numRepeats);
                     repeatSignals = [];
                     for rep = 1:numRepeats
                         if numRepeats > 1
@@ -499,6 +578,7 @@ function record_acoustic_sample()
                         if numRepeats > 1
                             repWav = fullfile(targetDir, sprintf('%s_rep%d.wav', sampleName, rep));
                             audiowrite(repWav, singleData, FS);
+                            repWavList{rep} = repWav;
                             if isempty(repeatSignals)
                                 repeatSignals = zeros(length(singleData), numRepeats);
                             end
@@ -511,8 +591,14 @@ function record_acoustic_sample()
                     end
 
                     if numRepeats > 1
-                        recordedData = mean(repeatSignals, 2);
-                        fprintf('[Ensemble Averaging] Successfully averaged %d repeats for %s\n', numRepeats, sampleName);
+                        try
+                            aligner = AudioAnalyzer('', 'AutoAlign', true, 'PreTriggerSeconds', 0.2, 'StimulusPath', stimFile);
+                            aligner.loadRepeatFiles(repWavList);
+                            recordedData = aligner.AudioData;
+                        catch
+                            recordedData = mean(repeatSignals, 2);
+                        end
+                        fprintf('[Ensemble Averaging] Time-aligned and averaged %d repeats for %s\n', numRepeats, sampleName);
                     end
 
                 case 3 % Mode 3: Sound Check (Speaker Only)
@@ -539,6 +625,16 @@ function record_acoustic_sample()
 
             % Write audio file (automatically replaces/overwrites existing sample)
             audiowrite(targetWav, recordedData, FS);
+
+            % Save active stimulus reference alongside recording for exact pipeline schedule alignment
+            if ~isempty(stimFile)
+                stimMetaPath = fullfile(targetDir, [sampleName, '_stimulus.txt']);
+                fid = fopen(stimMetaPath, 'w');
+                if fid > 0
+                    fprintf(fid, '%s\n', stimFile);
+                    fclose(fid);
+                end
+            end
 
             % Update Waveform Oscilloscope Display
             tAxis = (0:length(recordedData)-1)' / FS;
@@ -727,5 +823,47 @@ function record_acoustic_sample()
 
     function onClose(~, ~)
         delete(fig);
+    end
+end
+
+function [stimPaths, stimNames] = scanStimulusFolder(stimDir, pref1, pref2)
+    % Scans sound_input/ for .wav and .mp3 tracks, placing preferred tracks at the top
+    stimPaths = {};
+    stimNames = {};
+
+    if exist(pref1, 'file')
+        [~, b, e] = fileparts(pref1);
+        stimPaths{end+1} = pref1;
+        stimNames{end+1} = [b, e];
+    end
+    if exist(pref2, 'file') && ~any(strcmpi(stimPaths, pref2))
+        [~, b, e] = fileparts(pref2);
+        stimPaths{end+1} = pref2;
+        stimNames{end+1} = [b, e];
+    end
+
+    if exist(stimDir, 'dir')
+        files = [dir(fullfile(stimDir, '*.wav')); dir(fullfile(stimDir, '*.mp3'))];
+        for k = 1:length(files)
+            fPath = fullfile(stimDir, files(k).name);
+            % Normalize slashes for comparison
+            normCand = strrep(fPath, '\', '/');
+            isDup = false;
+            for j = 1:length(stimPaths)
+                if strcmpi(strrep(stimPaths{j}, '\', '/'), normCand)
+                    isDup = true;
+                    break;
+                end
+            end
+            if ~isDup
+                stimPaths{end+1} = normCand; %#ok<AGROW>
+                stimNames{end+1} = files(k).name; %#ok<AGROW>
+            end
+        end
+    end
+
+    if isempty(stimPaths)
+        stimPaths = {''};
+        stimNames = {'[No Stimulus Found - Run generate_sound_input.m]'};
     end
 end
