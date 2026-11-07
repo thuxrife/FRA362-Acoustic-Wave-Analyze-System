@@ -169,7 +169,7 @@ Uses a unified column structure for both single ($N=1$) and multi-repeat ($N>1$)
 | **3** | `Onset_Time_s` | Aligned start time of the tone burst in seconds |
 | **4** | `Duration_s` | Active duration of the tone step in seconds |
 | **5** | `Step_RMS` | Root-Mean-Square amplitude across the active tone step |
-| **6** | `Step_Peak_Amp` | Maximum Hilbert envelope amplitude within the tone step |
+| **6** | `Step_Peak_Amp` | Maximum raw discrete sound pressure amplitude $\max(\|s(t)\|)$ within the tone step |
 | **7** | `Energy_dB` | Acoustic energy level in decibels ($20 \log_{10}(\text{Step\_RMS})$) |
 
 ---

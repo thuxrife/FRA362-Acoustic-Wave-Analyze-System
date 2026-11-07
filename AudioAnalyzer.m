@@ -228,36 +228,65 @@ classdef AudioAnalyzer < handle
         end
 
         function plotFrequency(obj, outputFilePath)
-            L = length(obj.AudioData);
-            if isempty(obj.NFFT)
-                nfft = 2^nextpow2(L);
-            else
-                nfft = obj.NFFT;
-            end
+            fs = obj.SampleRate;
+            upperFreq = obj.resolveMaxFrequency();
 
-            Y = fft(obj.AudioData, nfft);
-            P2 = abs(Y / L);
-            P1 = P2(1:floor(nfft/2) + 1);
-            P1(2:end-1) = 2 * P1(2:end-1);
-            f = obj.SampleRate * (0:(nfft/2)) / nfft;
+            % Option 1: Direct Raw Discrete Step Response (no curvy envelope, no background smearing)
+            [stepOnsets, stepEnds, stepFreqs] = obj.detectFrequencySteps();
+            numSteps = length(stepFreqs);
 
             fig = obj.createFigure();
-            hLine = plot(f, P1, 'r');
-            try
-                hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.1f Hz');
-                hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('|Amplitude|', 'YData', '%.5f');
-                binIdx = 1:length(f);
-                hLine.DataTipTemplate.DataTipRows(end + 1) = dataTipTextRow('FFT Bin', binIdx, '%d');
-            catch
+            hold on;
+
+            if numSteps >= 2
+                f_steps  = stepFreqs(:)';
+                amp_step = zeros(1, numSteps);
+
+                for k = 1:numSteps
+                    idx1 = max(1, min(length(obj.AudioData), stepOnsets(k)));
+                    idx2 = max(idx1, min(length(obj.AudioData), stepEnds(k)));
+                    sigStep = obj.AudioData(idx1:idx2);
+                    amp_step(k) = max(abs(sigStep));
+                end
+
+                % Single clean raw line with solid markers directly on measured steps
+                hLine = plot(f_steps, amp_step, 'b-o', 'LineWidth', 1.5, ...
+                    'MarkerSize', 6, 'MarkerFaceColor', [0.20, 0.60, 1.0], ...
+                    'DisplayName', 'Raw Peak Amplitude');
+
+                try
+                    hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.0f Hz');
+                    hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('Raw Peak Amp', 'YData', '%.5f');
+                catch
+                end
+
+                maxAmpVal = max(amp_step);
+                if maxAmpVal > 0
+                    ylim([0, maxAmpVal * 1.25]);
+                end
+            else
+                % Fallback for unsegmented single continuous signals (pure raw FFT)
+                L = length(obj.AudioData);
+                nfft = 2^nextpow2(L);
+                Y = fft(obj.AudioData, nfft);
+                P2 = abs(Y / L);
+                P1 = P2(1:floor(nfft/2) + 1);
+                P1(2:end-1) = 2 * P1(2:end-1);
+                f = fs * (0:(nfft/2)) / nfft;
+
+                hLine = plot(f, P1, 'r-', 'LineWidth', 1.2);
+                try
+                    hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.1f Hz');
+                    hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('|Amplitude|', 'YData', '%.5f');
+                catch
+                end
             end
+
             xlabel('Frequency (Hz)');
-            ylabel('|Amplitude|');
-            
-            header = obj.formatTitle('Frequency Spectrum (Raw FFT)');
+            ylabel('Peak Amplitude |s(t)|');
+            header = obj.formatTitle('Discrete Frequency Response (Raw Measurements)');
             title(header, 'Interpreter', 'none');
             grid on;
-
-            upperFreq = obj.resolveMaxFrequency();
             xlim([0, upperFreq]);
 
             % Show plane wave cut-off frequency guide
@@ -369,11 +398,7 @@ classdef AudioAnalyzer < handle
                 tWin = (0:length(sigWin) - 1) / fs;
                 x_raw = (tWin * v) / (2 * L);
 
-                try
-                    envStep = abs(hilbert(sigWin));
-                catch
-                    envStep = abs(sigWin);
-                end
+                envStep = abs(sigWin);
 
                 % Interpolate to common dimensionless distance grid
                 env_all(k, :) = interp1(x_raw, envStep, x_grid, 'linear', 'extrap');
@@ -542,13 +567,7 @@ classdef AudioAnalyzer < handle
         end
 
         function featTable = extractStepFeatures(obj, outputCsvPath, T_raw)
-            % Extracts per-frequency step features across all 16 scheduled steps without dropping bands
-            try
-                env = abs(hilbert(obj.AudioData));
-            catch
-                env = abs(obj.AudioData);
-            end
-
+            % Extracts per-frequency step features directly from raw discrete audio samples (no Hilbert transform)
             if nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
                 colNames = T_raw.Properties.VariableNames;
                 if ismember('Freq_Input', colNames)
@@ -590,19 +609,13 @@ classdef AudioAnalyzer < handle
                 idx1 = max(1, min(M, stepOnsets(k)));
                 idx2 = max(idx1, min(M, stepEnds(k)));
 
-                % For ultra-short impulses (e.g. 2-wave burst = 1..7ms), evaluate acoustic energy
-                % over at least a 25ms pipe transit response window so echo energy is captured
-                minRespSamples = round(0.025 * fs);
-                idxEvalEnd = min(M, max(idx2, idx1 + minRespSamples - 1));
-
-                sigStep = obj.AudioData(idx1:idxEvalEnd);
-                envStep = env(idx1:idxEvalEnd);
+                sigStep = obj.AudioData(idx1:idx2);
 
                 Freq_Hz(k)       = stepFreqs(k);
                 Onset_Time_s(k)  = round(obj.TimeVector(idx1), 4);
                 Duration_s(k)    = round((idx2 - idx1 + 1) / fs, 4);
                 Step_RMS(k)      = round(rms(sigStep), 6);
-                Step_Peak_Amp(k) = round(max(envStep), 6);
+                Step_Peak_Amp(k) = round(max(abs(sigStep)), 6);
                 Energy_dB(k)     = round(20 * log10(Step_RMS(k) + eps), 3);
             end
 

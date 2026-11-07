@@ -331,8 +331,14 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
             cIdx = mod(k - 1, numColors) + 1;
             c = colorPalette(cIdx, :);
 
-            h = plot(ax, extractedData(k).x, extractedData(k).y, 'Color', c, 'LineWidth', 1.2, ...
-                'DisplayName', extractedData(k).label);
+            if isFreq && length(extractedData(k).x) <= 32
+                h = plot(ax, extractedData(k).x, extractedData(k).y, '-o', 'Color', c, ...
+                    'LineWidth', 1.5, 'MarkerSize', 5.5, 'MarkerFaceColor', c, ...
+                    'DisplayName', extractedData(k).label);
+            else
+                h = plot(ax, extractedData(k).x, extractedData(k).y, 'Color', c, 'LineWidth', 1.2, ...
+                    'DisplayName', extractedData(k).label);
+            end
 
             % Native datatips
             try

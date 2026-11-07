@@ -214,13 +214,20 @@ function record_acoustic_sample()
         'ForegroundColor', cTextSec, ...
         'FontSize', 9, 'HorizontalAlignment', 'left');
 
-    % Figure Overlay Comparison Tool Button
+    % Figure Overlay & Baseline Subtraction Tool Buttons
     btnOverlay = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
-        'String', 'OVERLAY COMPARISON TOOL', ...
-        'Position', [15, 64, 295, 36], ...
+        'String', 'Overlay Tool', ...
+        'Position', [15, 64, 142, 36], ...
         'BackgroundColor', [0.38, 0.25, 0.55], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
         'Callback', @onOverlayClick);
+
+    btnDiff = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+        'String', 'Subtract (Diff)', ...
+        'Position', [168, 64, 142, 36], ...
+        'BackgroundColor', [0.75, 0.32, 0.15], 'ForegroundColor', [1, 1, 1], ...
+        'FontSize', 9, 'FontWeight', 'bold', ...
+        'Callback', @onDiffClick);
 
     % 1-Click Pipeline Button
     btnPipeline = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
@@ -803,6 +810,27 @@ function record_acoustic_sample()
         catch ME
             errordlg(sprintf('Overlay tool error: %s', ME.message), 'Overlay Failed');
             set(lblStatus, 'String', 'STATUS: OVERLAY FAILED', 'BackgroundColor', cAccentRed);
+        end
+    end
+
+    function onDiffClick(~, ~)
+        try
+            trialName = strtrim(get(txtTrial, 'String'));
+            if isempty(trialName), trialName = defaultTrial; end
+            taskName = sprintf('diff_%s', trialName);
+
+            set(lblStatus, 'String', 'STATUS: SUBTRACTING BASELINE...', 'BackgroundColor', [0.75, 0.32, 0.15]);
+            drawnow;
+
+            outPath = diff_figures({}, taskName, true);
+            if ~isempty(outPath)
+                set(lblStatus, 'String', 'STATUS: DIFFERENCE SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
+            else
+                set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
+            end
+        catch ME
+            errordlg(sprintf('Difference tool error: %s', ME.message), 'Subtraction Failed');
+            set(lblStatus, 'String', 'STATUS: DIFF FAILED', 'BackgroundColor', cAccentRed);
         end
     end
 
