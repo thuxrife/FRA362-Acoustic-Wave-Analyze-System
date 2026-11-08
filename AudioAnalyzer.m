@@ -630,6 +630,165 @@ classdef AudioAnalyzer < handle
                 writetable(featTable, outputCsvPath);
             end
         end
+
+        function profileTable = exportRecordProfile(obj, outputFilePath, T_raw)
+            % Evaluates data quality, cross-repeat correlation (r), noise floor (SD in dB),
+            % and microphone clipping, exporting record_profile.csv to the analysis folder.
+            numReps = size(obj.RepeatDataMatrix, 2);
+            durS = obj.Duration;
+            maxPeak = max(abs(obj.AudioData));
+            clipCount = sum(abs(obj.AudioData) >= 0.98);
+
+            r_mean = NaN;
+            sd_mean_db = NaN;
+            verdict = 'GRADE_A_EXCELLENT';
+            status_corr = 'N/A';
+            status_sd = 'N/A';
+
+            if numReps >= 2 && nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
+                stepIDs = unique(T_raw.Step_ID(T_raw.Step_ID > 0));
+                numSteps = length(stepIDs);
+                ampCols = T_raw.Properties.VariableNames(~cellfun(@isempty, regexp(T_raw.Properties.VariableNames, '^Amp_\d+$')));
+                if isempty(ampCols)
+                    ampCols = arrayfun(@(k) sprintf('Amp_%d', k), 1:numReps, 'UniformOutput', false);
+                end
+                actReps = min(numReps, length(ampCols));
+
+                if numSteps >= 4 && actReps >= 2
+                    stepDBs = zeros(numSteps, actReps);
+                    for sIdx = 1:numSteps
+                        sID = stepIDs(sIdx);
+                        subIdx = (T_raw.Step_ID == sID);
+                        for rIdx = 1:actReps
+                            cName = ampCols{rIdx};
+                            if ismember(cName, T_raw.Properties.VariableNames)
+                                rSig = T_raw.(cName)(subIdx);
+                            else
+                                rSig = obj.RepeatDataMatrix(subIdx, rIdx);
+                            end
+                            rmsVal = sqrt(mean(rSig.^2));
+                            if rmsVal > 0
+                                stepDBs(sIdx, rIdx) = 20 * log10(rmsVal);
+                            else
+                                stepDBs(sIdx, rIdx) = -100;
+                            end
+                        end
+                    end
+
+                    R_mat = corrcoef(stepDBs);
+                    triuIdx = find(triu(ones(actReps), 1));
+                    if ~isempty(triuIdx)
+                        pair_r = R_mat(triuIdx);
+                        r_mean = mean(pair_r(~isnan(pair_r)));
+                    end
+
+                    step_sds = std(stepDBs, 0, 2);
+                    sd_mean_db = mean(step_sds(~isnan(step_sds)));
+
+                    if r_mean >= 0.88
+                        status_corr = 'PASS';
+                    elseif r_mean >= 0.70
+                        status_corr = 'WARNING';
+                    else
+                        status_corr = 'FAIL';
+                    end
+
+                    if sd_mean_db <= 2.0
+                        status_sd = 'PASS';
+                    elseif sd_mean_db <= 3.5
+                        status_sd = 'WARNING';
+                    else
+                        status_sd = 'FAIL';
+                    end
+                end
+            end
+
+            if clipCount > 0
+                status_clip = 'FAIL';
+                verdict = 'GRADE_C_CLIPPED_RE_RECORD';
+            else
+                status_clip = 'PASS';
+            end
+
+            if clipCount == 0
+                if numReps >= 2
+                    if (isnan(r_mean) || r_mean >= 0.88) && (isnan(sd_mean_db) || sd_mean_db <= 2.0)
+                        verdict = 'GRADE_A_EXCELLENT';
+                    elseif (r_mean >= 0.70) && (sd_mean_db <= 3.5)
+                        verdict = 'GRADE_B_USABLE';
+                    else
+                        verdict = 'GRADE_C_NOISY_RE_RECORD';
+                    end
+                else
+                    verdict = 'SINGLE_TRIAL_VALID';
+                end
+            end
+
+            status_overall = 'VALID';
+            if startsWith(verdict, 'GRADE_C')
+                status_overall = 'RE_RECORD';
+            end
+
+            Metric = {
+                'Num_Repeats';
+                'Repeat_Correlation_r';
+                'Mean_Repeat_SD_dB';
+                'Max_Peak_Amplitude';
+                'Clipping_Sample_Count';
+                'Total_Duration_s';
+                'Data_Quality_Verdict'
+            };
+
+            Value = {
+                sprintf('%d', numReps);
+                sprintf('%.4f', r_mean);
+                sprintf('%.2f', sd_mean_db);
+                sprintf('%.4f', maxPeak);
+                sprintf('%d', clipCount);
+                sprintf('%.3f', durS);
+                verdict
+            };
+
+            Unit = {
+                'repeats';
+                'dimensionless';
+                'dB';
+                'normalized (0-1)';
+                'samples';
+                'seconds';
+                'category'
+            };
+
+            Criteria = {
+                'N >= 5 recommended';
+                'r >= 0.85 (Pass), >= 0.70 (Usable)';
+                'SD <= 2.0 dB (Pass), <= 3.5 dB (Usable)';
+                'Peak < 0.98 (No clipping)';
+                '0 samples (Pass)';
+                '>= 5.0 s';
+                'Grade A / B valid for analysis'
+            };
+
+            Status = {
+                'PASS';
+                status_corr;
+                status_sd;
+                status_clip;
+                status_clip;
+                'PASS';
+                status_overall
+            };
+
+            profileTable = table(Metric, Value, Unit, Criteria, Status);
+
+            if nargin >= 2 && ~isempty(outputFilePath)
+                [pDir, ~, ~] = fileparts(outputFilePath);
+                if ~isempty(pDir) && ~exist(pDir, 'dir')
+                    mkdir(pDir);
+                end
+                writetable(profileTable, outputFilePath);
+            end
+        end
     end
 
     methods (Access = private)

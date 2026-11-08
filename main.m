@@ -242,6 +242,7 @@ function main(targetTrial, forceReprocess)
 
         targetDir = fullfile(OUTPUT_ROOT, trialName, sampleName);
         featCsvPath = fullfile(targetDir, 'features_by_frequency.csv');
+        profCsvPath = fullfile(targetDir, 'record_profile.csv');
         featureEngine.TitlePrefix = sprintf('%s-%s', trialName, sampleName);
 
         % Generate 1-Click Interactive Hyperlinks for MATLAB Command Window
@@ -253,9 +254,11 @@ function main(targetTrial, forceReprocess)
         freqFig = strrep(freqFigPath, '\', '/');
         specFig = strrep(specFigPath, '\', '/');
         featCsv = strrep(featCsvPath, '\', '/');
+        profCsv = strrep(profCsvPath, '\', '/');
         fDir    = strrep(targetDir, '\', '/');
 
         linkFeat = sprintf('<a href="matlab:open(''%s'');">[Features CSV]</a>', featCsv);
+        linkProf = sprintf('<a href="matlab:open(''%s'');">[Quality Profile]</a>', profCsv);
         linkAmp  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a>', ampFig);
         linkFreq = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a>', freqFig);
         linkSpec = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', specFig);
@@ -263,8 +266,8 @@ function main(targetTrial, forceReprocess)
 
         % Check if Stage 2 outputs already exist and are newer than the logged CSV
         stage2UpToDate = false;
-        if ~forceReprocess && exist(featCsvPath, 'file') && exist(ampFigPath, 'file') && ...
-                exist(freqFigPath, 'file') && exist(specFigPath, 'file')
+        if ~forceReprocess && exist(featCsvPath, 'file') && exist(profCsvPath, 'file') && ...
+                exist(ampFigPath, 'file') && exist(freqFigPath, 'file') && exist(specFigPath, 'file')
             infoCsv  = dir(csvPath);
             infoFeat = dir(featCsvPath);
             infoAmp  = dir(ampFigPath);
@@ -281,8 +284,8 @@ function main(targetTrial, forceReprocess)
         end
 
         if stage2UpToDate
-            fprintf('  [STAGE 2 SKIP] %-20s (Already Analyzed) -> %s %s %s %s | %s\n', ...
-                sampleName, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
+            fprintf('  [STAGE 2 SKIP] %-20s (Already Analyzed) -> %s %s %s %s %s | %s\n', ...
+                sampleName, linkProf, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
             continue;
         end
 
@@ -290,13 +293,20 @@ function main(targetTrial, forceReprocess)
             % Ingest logged CSV and compute discrete per-frequency table
             T_raw = featureEngine.loadFromCSV(csvPath);
             featTable = featureEngine.extractStepFeatures(featCsvPath, T_raw);
+            profTable = featureEngine.exportRecordProfile(profCsvPath, T_raw);
 
             % Generate interactive .fig plots with coordinate tracking
             featureEngine.analyzeAndExport(targetDir);
             totalAnalyzed = totalAnalyzed + 1;
 
-            fprintf('  [STAGE 2 OK]   %-20s (%2d steps)         -> %s %s %s %s | %s\n', ...
-                sampleName, height(featTable), linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
+            verdictStr = 'VALID';
+            try
+                verdictStr = profTable.Value{strcmp(profTable.Metric, 'Data_Quality_Verdict')};
+            catch
+            end
+
+            fprintf('  [STAGE 2 OK]   %-20s [%-18s] -> %s %s %s %s %s | %s\n', ...
+                sampleName, verdictStr, linkProf, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
 
         catch ME
             fprintf(2, '  [ERROR] Feature extraction failed for %s: %s\n', csvPath, ME.message);

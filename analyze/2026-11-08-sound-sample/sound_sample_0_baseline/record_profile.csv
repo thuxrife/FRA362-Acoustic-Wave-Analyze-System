@@ -1,0 +1,8 @@
+Metric,Value,Unit,Criteria,Status
+Num_Repeats,10,repeats,"N >= 5 recommended",PASS
+Repeat_Correlation_r,0.5886,dimensionless,"r >= 0.85 (Pass), >= 0.70 (Usable)",FAIL
+Mean_Repeat_SD_dB,2.18,dB,"SD <= 2.0 dB (Pass), <= 3.5 dB (Usable)",WARNING
+Max_Peak_Amplitude,0.4946,normalized (0-1),"Peak < 0.98 (No clipping)",PASS
+Clipping_Sample_Count,0,samples,"0 samples (Pass)",PASS
+Total_Duration_s,8.584,seconds,">= 5.0 s",PASS
+Data_Quality_Verdict,GRADE_C_NOISY_RE_RECORD,category,"Grade A / B valid for analysis",RE_RECORD
