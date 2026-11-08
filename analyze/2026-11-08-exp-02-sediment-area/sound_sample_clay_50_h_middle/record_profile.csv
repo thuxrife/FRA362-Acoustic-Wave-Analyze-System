@@ -1,0 +1,10 @@
+Metric,Value,Unit,Criteria,Status
+Num_Repeats,10,repeats,"N >= 5 recommended",PASS
+CV_Range_pct,0.43 - 5.32 (Span: 4.89),%,"Max CV <= 5.5% (Pass), <= 10.0% (Usable)",PASS
+STDEV_Range_dB,0.03 - 0.21 (Span: 0.18),dB,"Max SD <= 0.50 dB (Pass), <= 1.00 dB (Usable)",PASS
+Repeat_Span_Range_dB,0.09 - 0.64,dB (Max-Min),"Max-Min spread across repeats",PASS
+Valid_Freq_Steps,16 / 16,steps,"All 16 frequencies <= 5.5% CV",PASS
+Max_Peak_Amplitude,0.6367,normalized (0-1),"Peak < 0.98 (No clipping)",PASS
+Clipping_Sample_Count,0,samples,"0 samples (Pass)",PASS
+Total_Duration_s,8.557,seconds,">= 5.0 s",PASS
+Data_Quality_Verdict,GRADE_A_EXCELLENT,category,"Grade A / B valid for analysis",VALID

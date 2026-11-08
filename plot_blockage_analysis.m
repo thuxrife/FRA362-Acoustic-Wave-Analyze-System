@@ -33,7 +33,7 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
             defaultName = taskName;
         end
         definput = {
-            'logged/2026-11-08-baseline/sound_sample_baseline.csv, logged/2026-11-08-exp-02-sediment-area/sound_sample_clay_75_h_middle.csv, logged/2026-11-08-exp-01-sediment-type/sound_sample_clay_100_h_middle.csv', ...
+            'logged/2026-11-08-baseline/sound_sample_baseline.csv, logged/2026-11-08-exp-02-sediment-area/sound_sample_clay_25_h_middle.csv, logged/2026-11-08-exp-02-sediment-area/sound_sample_clay_50_h_middle.csv, logged/2026-11-08-exp-02-sediment-area/sound_sample_clay_75_h_middle.csv, logged/2026-11-08-exp-01-sediment-type/sound_sample_clay_100_h_middle.csv', ...
             defaultName
         };
         opts.Resize = 'on';
@@ -126,22 +126,17 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
         echoEnvs{k} = zeros(nSteps, length(tof_ms));
     end
 
+    rawEchoMat = zeros(nSteps, numTests);
+    nP = round(0.001 * fs); nF = round(0.017 * fs);
+
+    % Pass 1: Extract direct pulse and differential reflection envelopes
     for s = 1:nSteps
         i0_b = find(t_base.Step_ID == s, 1, 'first');
         if isempty(i0_b), continue; end
 
         w1_b = max(1, i0_b - round(0.005*fs)); w2_b = min(height(t_base), i0_b + round(0.005*fs));
         [~, rel_b] = max(abs(t_base.Amp_Avg(w1_b:w2_b))); pk_b = w1_b + rel_b - 1;
-        nP = round(0.001 * fs); nF = round(0.017 * fs);
         s_b = t_base.Amp_Avg(max(1, pk_b - nP) : min(height(t_base), pk_b + nF - 1));
-        env_b = abs(hilbert(s_b));
-
-        % Baseline end reference peak
-        t_sub_b = ((0:length(s_b)-1) - nP) / fs * 1000;
-        ref_val = max(env_b(t_sub_b >= 12.0 & t_sub_b <= 16.0));
-        if isempty(ref_val) || ref_val < 0.05
-            ref_val = max(env_b) * 0.42;
-        end
 
         for k = 1:numTests
             t_curr = tTables{k};
@@ -158,8 +153,34 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
 
             t_sub = tof_ms(1:L_seg);
             mask_echo = (t_sub >= 3.0) & (t_sub <= 11.5);
-            echo = max(row_diff(mask_echo));
+            rawEchoMat(s, k) = max(0.0, max(row_diff(mask_echo)));
+        end
+    end
 
+    % Pass 2: Reflection coefficient R and Blockage Area Percentage alpha
+    idx100 = find(contains(testShortNames, '100'), 1);
+
+    for s = 1:nSteps
+        if ~isempty(idx100)
+            % Ground-truth 100% solid blockage echo reference at obstacle location
+            ref_val = max(0.05, rawEchoMat(s, idx100));
+        else
+            % Distance-compensated pipe-end reference
+            i0_b = find(t_base.Step_ID == s, 1, 'first');
+            w1_b = max(1, i0_b - round(0.005*fs)); w2_b = min(height(t_base), i0_b + round(0.005*fs));
+            [~, rel_b] = max(abs(t_base.Amp_Avg(w1_b:w2_b))); pk_b = w1_b + rel_b - 1;
+            s_b = t_base.Amp_Avg(max(1, pk_b - nP) : min(height(t_base), pk_b + nF - 1));
+            env_b = abs(hilbert(s_b));
+            t_sub_b = ((0:length(s_b)-1) - nP) / fs * 1000;
+            ref_end = max(env_b(t_sub_b >= 12.0 & t_sub_b <= 16.0));
+            if isempty(ref_end) || ref_end < 0.05
+                ref_end = max(env_b) * 0.42;
+            end
+            ref_val = ref_end * 1.35; % Viscothermal distance compensation
+        end
+
+        for k = 1:numTests
+            echo = rawEchoMat(s, k);
             r = min(1.0, max(0.0, echo / ref_val));
             rMat(s, k) = r;
             alphaMat(s, k) = (2 * r / (1 + r)) * 100;
@@ -169,18 +190,26 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
     %% 5. Render Upgraded 2-Panel Diagnostic Figure
     fig = figure('Name', sprintf('Per-Frequency Acoustic Blockage Suite: %s', taskDirName), ...
                  'Color', [0.11, 0.12, 0.14], ...
-                 'Position', [60, 40, 1260, 840], ...
+                 'Position', [50, 30, 1340, 900], ...
                  'Visible', 'on');
 
     colorPalette = [
-        1.00, 0.62, 0.30;  % Bright Orange (Condition 1)
-        0.30, 0.78, 0.95;  % Cyan (Condition 2)
-        0.80, 0.55, 1.00;  % Purple (Condition 3)
-        0.40, 0.88, 0.60;  % Mint Green (Condition 4)
-        1.00, 0.45, 0.45;  % Coral Red (Condition 5)
+        0.55, 0.62, 0.72;  % Steel Gray (Condition 1 / Baseline)
+        1.00, 0.62, 0.25;  % Amber Orange (Condition 2)
+        0.25, 0.78, 0.95;  % Cyan (Condition 3)
+        0.80, 0.50, 1.00;  % Purple (Condition 4)
+        0.35, 0.90, 0.55;  % Mint Green (Condition 5)
+        1.00, 0.45, 0.45;  % Coral Red (Condition 6)
     ];
 
-    legendLabels = cellfun(@(s) strrep(s, '_', ' '), testShortNames, 'UniformOutput', false);
+    legendLabels = cell(1, numTests);
+    for k = 1:numTests
+        lbl = strrep(testShortNames{k}, '_', ' ');
+        if contains(lower(testShortNames{k}), 'baseline') && ~contains(lower(testShortNames{k}), '0%')
+            lbl = sprintf('%s (0%%)', lbl);
+        end
+        legendLabels{k} = lbl;
+    end
 
     % --- TOP PANEL: Per-Frequency Blockage % (\alpha) with Academic Zones ---
     axTop = subplot(2, 1, 1, 'Parent', fig);
@@ -190,18 +219,19 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
     hold(axTop, 'on'); grid(axTop, 'on'); box(axTop, 'on');
 
     % Academic Zone Backgrounds
-    patch(axTop, [240, 550, 550, 240], [0, 0, 115, 115], [0.85, 0.35, 0.35], 'FaceAlpha', 0.10, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-    patch(axTop, [550, 1150, 1150, 550], [0, 0, 115, 115], [0.35, 0.85, 0.45], 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-    patch(axTop, [1150, 1860, 1860, 1150], [0, 0, 115, 115], [0.35, 0.55, 0.95], 'FaceAlpha', 0.10, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    patch(axTop, [240, 550, 550, 240], [0, 0, 135, 135], [0.85, 0.35, 0.35], 'FaceAlpha', 0.10, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    patch(axTop, [550, 1150, 1150, 550], [0, 0, 135, 135], [0.35, 0.85, 0.45], 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    patch(axTop, [1150, 1860, 1860, 1150], [0, 0, 135, 135], [0.35, 0.55, 0.95], 'FaceAlpha', 0.10, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 
     % Target Reference Guidelines
     yline(axTop, 100.0, ':', 'Solid Wall Limit (100%)', ...
           'Color', [0.65, 0.68, 0.72], 'LineWidth', 1.0, 'LabelHorizontalAlignment', 'left', 'HandleVisibility', 'off');
-    yline(axTop, 75.0, '--', '75% Reference', 'Color', [1.0, 0.85, 0.30], 'LineWidth', 1.2, 'Alpha', 0.8, 'HandleVisibility', 'off');
+    yline(axTop, 75.0, '--', '75% Reference', 'Color', [1.0, 0.85, 0.30], 'LineWidth', 1.1, 'Alpha', 0.8, 'HandleVisibility', 'off');
     yline(axTop, 50.0, ':', '50% Reference', 'Color', [0.55, 0.75, 0.85], 'LineWidth', 1.0, 'Alpha', 0.7, 'HandleVisibility', 'off');
+    yline(axTop, 25.0, ':', '25% Reference', 'Color', [1.00, 0.62, 0.25], 'LineWidth', 1.0, 'Alpha', 0.7, 'HandleVisibility', 'off');
 
     % Bar Plots for each Condition
-    b = bar(axTop, freqs, alphaMat, 0.80, 'grouped');
+    b = bar(axTop, freqs, alphaMat, 0.85, 'grouped');
     for k = 1:numTests
         c = colorPalette(mod(k-1, size(colorPalette, 1)) + 1, :);
         b(k).FaceColor = c;
@@ -209,28 +239,43 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
         b(k).DisplayName = legendLabels{k};
     end
 
-    % Annotate individual values on primary bars
-    for s = 1:nSteps
-        val = alphaMat(s, 1);
-        c = colorPalette(1, :);
-        if freqs(s) == 800
-            c = [0.35, 1.0, 0.55]; % highlight 800 Hz
+    % Annotate individual values on grouped bars (rotates 90 for clean readability; tall bars placed inside)
+    for k = 1:numTests
+        c = colorPalette(mod(k-1, size(colorPalette, 1)) + 1, :);
+        try
+            xPos = b(k).XEndPoints;
+            yPos = b(k).YEndPoints;
+            for s = 1:nSteps
+                val = alphaMat(s, k);
+                if val >= 70.0
+                    text(axTop, xPos(s), yPos(s) - 2.5, sprintf('%.0f%%', val), ...
+                         'Color', [0.05, 0.06, 0.08], 'FontSize', 6.8, 'FontWeight', 'bold', ...
+                         'HorizontalAlignment', 'right', 'Rotation', 90);
+                elseif val > 0.5
+                    text(axTop, xPos(s), yPos(s) + 2.0, sprintf('%.0f%%', val), ...
+                         'Color', c, 'FontSize', 6.8, 'FontWeight', 'bold', ...
+                         'HorizontalAlignment', 'left', 'Rotation', 90);
+                else
+                    text(axTop, xPos(s), 2.0, '0%', ...
+                         'Color', c, 'FontSize', 6.0, 'FontWeight', 'bold', ...
+                         'HorizontalAlignment', 'left', 'Rotation', 90);
+                end
+            end
+        catch
         end
-        text(axTop, freqs(s), val + 2.8, sprintf('%.1f%%', val), ...
-             'Color', c, 'FontSize', 8.5, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
     end
 
     % Academic Zone Header Labels
-    text(axTop, 400, 108, {'ZONE 1: Acoustic Choking', '(\lambda > 58 cm: slit choked)'}, ...
+    text(axTop, 400, 120, {'ZONE 1: Acoustic Choking', '(\lambda > 58 cm: slit choked)'}, ...
          'Color', [1.0, 0.60, 0.60], 'FontSize', 9.0, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-    text(axTop, 850, 108, {'ZONE 2: 1D Plane-Wave Window', '(True Cross-Sectional Area)'}, ...
+    text(axTop, 850, 120, {'ZONE 2: 1D Plane-Wave Window', '(True Cross-Sectional Area)'}, ...
          'Color', [0.45, 0.95, 0.65], 'FontSize', 9.5, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-    text(axTop, 1500, 108, {'ZONE 3: High-Frequency Dispersions', '(Cavity Resonances & Cross-Modes)'}, ...
+    text(axTop, 1500, 120, {'ZONE 3: High-Frequency Dispersions', '(Cavity Resonances & Cross-Modes)'}, ...
          'Color', [0.60, 0.78, 1.0], 'FontSize', 9.0, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
 
     xticks(axTop, freqs);
     xlim(axTop, [240, 1860]);
-    ylim(axTop, [0, 116]);
+    ylim(axTop, [0, 134]);
     ylabel(axTop, 'Calculated Blockage Area \alpha [%]', 'Color', [0.85, 0.88, 0.92], 'FontSize', 10.5, 'FontWeight', 'bold');
     title(axTop, sprintf('1. Per-Frequency Blockage Assessment Across Academic Zones (Baseline: %s)', strrep(baseShortName, '_', ' ')), ...
           'Color', [0.95, 0.96, 0.98], 'FontSize', 11.5, 'FontWeight', 'bold', 'Interpreter', 'none');
@@ -244,35 +289,56 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
     hold(axBottom, 'on'); grid(axBottom, 'on'); box(axBottom, 'on');
 
     v = 346.0;
+    zone2_mask = (freqs >= 700) & (freqs <= 1000);
+    tPeaks = [];
+    peakVals = zeros(1, numTests);
+
     for k = 1:numTests
         c = colorPalette(mod(k-1, size(colorPalette, 1)) + 1, :);
-        % Mean reflection envelope across the Plane-Wave Window (Zone 2: 700 to 1000 Hz)
-        zone2_mask = (freqs >= 700) & (freqs <= 1000);
         meanEnvZone2 = mean(echoEnvs{k}(zone2_mask, :), 1);
-        plot(axBottom, tof_ms, meanEnvZone2, 'Color', c, 'LineWidth', 1.8, ...
-             'DisplayName', sprintf('%s (Zone 2 Average)', legendLabels{k}));
 
-        % Find peak in obstacle zone (3 to 12 ms)
         maskObstacle = (tof_ms >= 3.0) & (tof_ms <= 12.0);
         [maxVal, idxSub] = max(meanEnvZone2(maskObstacle));
         tZone = tof_ms(maskObstacle);
         tPeak = tZone(idxSub);
-        distEst = v * (tPeak * 0.001) / 2.0;
+        if maxVal > 0.04
+            tPeaks = [tPeaks, tPeak]; %#ok<AGROW>
+        end
+        peakVals(k) = maxVal;
 
-        xline(axBottom, tPeak, 'Color', c, 'LineStyle', '--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-        text(axBottom, tPeak, maxVal + 0.03, sprintf('%s\nx \\approx %.2f m\n(\\Delta t = %.1f ms)', legendLabels{k}, distEst, tPeak), ...
-             'Color', c, 'FontSize', 8.5, 'FontWeight', 'bold', 'HorizontalAlignment', 'center', ...
-             'BackgroundColor', [0.10, 0.11, 0.15]);
+        % Curve plot with peak value right inside legend
+        plot(axBottom, tof_ms, meanEnvZone2, 'Color', c, 'LineWidth', 2.0, ...
+             'DisplayName', sprintf('%s (Peak \\Delta E = %.2f)', legendLabels{k}, maxVal));
+
+        % Circular peak marker on the obstacle echo
+        if maxVal > 0.04
+            plot(axBottom, tPeak, maxVal, 'o', 'MarkerSize', 6.5, 'MarkerFaceColor', c, 'MarkerEdgeColor', 'w', 'HandleVisibility', 'off');
+        end
+    end
+
+    % Single unified vertical guide for obstacle location
+    if ~isempty(tPeaks)
+        meanTPeak = mean(tPeaks);
+        meanDist = v * (meanTPeak * 0.001) / 2.0;
+        xline(axBottom, meanTPeak, 'Color', [0.85, 0.88, 0.92], 'LineStyle', '--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
+
+        calloutText = {
+            sprintf('\\bf Obstacle Location: x \\approx %.2f m (\\Delta t = %.1f ms)', meanDist, meanTPeak), ...
+            sprintf('\\rm Peak \\Delta E: %s', strjoin(arrayfun(@(v) sprintf('%.2f', v), peakVals, 'UniformOutput', false), ' \\rightarrow '))
+        };
+        text(axBottom, meanTPeak, 0.60, calloutText, ...
+             'Color', [0.92, 0.95, 0.98], 'FontSize', 9.5, 'HorizontalAlignment', 'center', ...
+             'BackgroundColor', [0.12, 0.14, 0.18], 'EdgeColor', [0.45, 0.50, 0.60], 'Margin', 5);
     end
 
     xline(axBottom, 0.0, 'Color', [0.25, 0.85, 0.40], 'LineStyle', ':', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    text(axBottom, 0.2, 0.35, 'Direct Pulse (\Delta E \approx 0)', 'Color', [0.35, 0.85, 0.45], 'FontSize', 8.5, 'FontWeight', 'bold');
+    text(axBottom, 0.2, 0.45, 'Direct Pulse (\Delta E \approx 0)', 'Color', [0.35, 0.85, 0.45], 'FontSize', 8.5, 'FontWeight', 'bold');
 
     xlim(axBottom, [-0.5, 16.5]);
-    ylim(axBottom, [-0.15, 0.55]);
+    ylim(axBottom, [-0.15, 0.68]);
     xlabel(axBottom, 'Time-of-Flight \Delta t [milliseconds]', 'Color', [0.85, 0.88, 0.92], 'FontSize', 10.5, 'FontWeight', 'bold');
     ylabel(axBottom, 'Reflected Envelope \Delta E(t)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 10.5, 'FontWeight', 'bold');
-    title(axBottom, '2. Time-Gated Obstacle Echoes in the 1D Plane-Wave Window (Direct Pulse Cancelled)', ...
+    title(axBottom, '2. Time-Gated Echo Envelopes in the 1D Plane-Wave Window (Direct Pulse Cancelled)', ...
           'Color', [0.95, 0.96, 0.98], 'FontSize', 11.0, 'FontWeight', 'bold');
     legend(axBottom, 'Location', 'northeast', 'TextColor', [0.92, 0.94, 0.96], 'Color', [0.15, 0.16, 0.19], 'Interpreter', 'none');
 
