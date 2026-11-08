@@ -224,20 +224,20 @@ function record_acoustic_sample()
         'Callback', @onOverlayClick);
 
     btnDiff = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
-        'String', 'Subtract', ...
+        'String', 'Blockage', ...
         'Position', [116, 64, 93, 36], ...
-        'BackgroundColor', [0.75, 0.32, 0.15], 'ForegroundColor', [1, 1, 1], ...
+        'BackgroundColor', [0.85, 0.28, 0.20], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
-        'Tooltip', 'Subtract reference baseline figure from test figure', ...
-        'Callback', @onDiffClick);
+        'Tooltip', 'Acoustic Blockage Analysis (Level 4 & 5): Delta dB & Physical Blockage Area %', ...
+        'Callback', @onBlockageClick);
 
     btnDelta = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
-        'String', 'Delta Comp', ...
+        'String', 'Reflex Map', ...
         'Position', [217, 64, 93, 36], ...
         'BackgroundColor', [0.10, 0.55, 0.60], 'ForegroundColor', [1, 1, 1], ...
         'FontSize', 9, 'FontWeight', 'bold', ...
-        'Tooltip', 'Compare baseline vs blocked delta responses across trials or environments', ...
-        'Callback', @onDeltaClick);
+        'Tooltip', 'Acoustic Reflex Map (Option C): 8s Timeline & Synchronized 16-Step Heatmaps', ...
+        'Callback', @onReflexClick);
 
     % 1-Click Pipeline Button
     btnPipeline = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
@@ -823,41 +823,45 @@ function record_acoustic_sample()
         end
     end
 
-    function onDiffClick(~, ~)
+    function onBlockageClick(~, ~)
         try
             trialName = strtrim(get(txtTrial, 'String'));
             if isempty(trialName), trialName = defaultTrial; end
-            taskName = sprintf('diff_%s', trialName);
+            taskName = sprintf('blockage_%s', trialName);
 
-            set(lblStatus, 'String', 'STATUS: SUBTRACTING BASELINE...', 'BackgroundColor', [0.75, 0.32, 0.15]);
+            set(lblStatus, 'String', 'STATUS: SELECTING BLOCKAGE FILES...', 'BackgroundColor', [0.85, 0.28, 0.20]);
             drawnow;
 
-            outPath = diff_figures({}, taskName, true);
+            outPath = plot_blockage_analysis({}, taskName);
             if ~isempty(outPath)
-                set(lblStatus, 'String', 'STATUS: DIFFERENCE SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
+                set(lblStatus, 'String', 'STATUS: BLOCKAGE CHART SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
             else
                 set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
             end
         catch ME
-            errordlg(sprintf('Difference tool error: %s', ME.message), 'Subtraction Failed');
-            set(lblStatus, 'String', 'STATUS: DIFF FAILED', 'BackgroundColor', cAccentRed);
+            errordlg(sprintf('Blockage analysis error: %s', ME.message), 'Blockage Tool Failed');
+            set(lblStatus, 'String', 'STATUS: BLOCKAGE FAILED', 'BackgroundColor', cAccentRed);
         end
     end
 
-    function onDeltaClick(~, ~)
+    function onReflexClick(~, ~)
         try
-            set(lblStatus, 'String', 'STATUS: RUNNING DELTA TOOL...', 'BackgroundColor', [0.10, 0.55, 0.60]);
+            trialName = strtrim(get(txtTrial, 'String'));
+            if isempty(trialName), trialName = defaultTrial; end
+            taskName = sprintf('reflex_%s', trialName);
+
+            set(lblStatus, 'String', 'STATUS: SELECTING REFLEX FILES...', 'BackgroundColor', [0.10, 0.55, 0.60]);
             drawnow;
 
-            outPath = plot_delta_comparison();
+            outPath = plot_acoustic_reflex_map({}, taskName);
             if ~isempty(outPath)
-                set(lblStatus, 'String', 'STATUS: DELTA CHART SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
+                set(lblStatus, 'String', 'STATUS: REFLEX MAP SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
             else
                 set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
             end
         catch ME
-            errordlg(sprintf('Delta comparison error: %s', ME.message), 'Delta Tool Failed');
-            set(lblStatus, 'String', 'STATUS: DELTA FAILED', 'BackgroundColor', cAccentRed);
+            errordlg(sprintf('Reflex Map error: %s', ME.message), 'Reflex Tool Failed');
+            set(lblStatus, 'String', 'STATUS: REFLEX FAILED', 'BackgroundColor', cAccentRed);
         end
     end
 

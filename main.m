@@ -267,18 +267,25 @@ function main(targetTrial, forceReprocess)
         linkSpec  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', specFig);
         linkDir   = sprintf('<a href="matlab:winopen(''%s'');">[Folder]</a>', fDir);
 
-        % Check if Stage 2 outputs already exist and are newer than the logged CSV
+        % Check if Stage 2 outputs already exist and are newer than both the logged CSV and AudioAnalyzer.m
         stage2UpToDate = false;
+        engineInfo = dir('AudioAnalyzer.m');
+        engineTime = 0;
+        if ~isempty(engineInfo), engineTime = engineInfo(1).datenum; end
+
         if ~forceReprocess && exist(featCsvPath, 'file') && exist(profCsvPath, 'file') && ...
-                exist(ampFigPath, 'file') && exist(freqFigPath, 'file') && exist(specFigPath, 'file')
+                exist(profFigPath, 'file') && exist(ampFigPath, 'file') && ...
+                exist(freqFigPath, 'file') && exist(specFigPath, 'file')
             infoCsv  = dir(csvPath);
             infoFeat = dir(featCsvPath);
             infoAmp  = dir(ampFigPath);
             if ~isempty(infoCsv) && ~isempty(infoFeat) && ~isempty(infoAmp) && ...
-                    infoFeat(1).datenum >= infoCsv(1).datenum && infoAmp(1).datenum >= infoCsv(1).datenum
+                    infoFeat(1).datenum >= infoCsv(1).datenum && ...
+                    infoAmp(1).datenum >= infoCsv(1).datenum && ...
+                    infoFeat(1).datenum >= engineTime
                 try
                     T_exist = readtable(featCsvPath);
-                    if height(T_exist) >= 16
+                    if height(T_exist) >= 16 && ismember('Step_FFT_Amp', T_exist.Properties.VariableNames)
                         stage2UpToDate = true;
                     end
                 catch
