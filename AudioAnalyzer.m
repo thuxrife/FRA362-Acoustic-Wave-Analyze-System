@@ -248,22 +248,50 @@ classdef AudioAnalyzer < handle
             if numSteps >= 2
                 f_steps  = stepFreqs(:)';
                 amp_step = zeros(1, numSteps);
+                M = length(obj.AudioData);
+                winPre  = round(0.015 * fs);
+                winPost = round(0.035 * fs);
 
                 for k = 1:numSteps
-                    idx1 = max(1, min(length(obj.AudioData), stepOnsets(k)));
-                    idx2 = max(idx1, min(length(obj.AudioData), stepEnds(k)));
-                    sigStep = obj.AudioData(idx1:idx2);
-                    amp_step(k) = max(abs(sigStep));
+                    idx1 = max(1, min(M, stepOnsets(k)));
+                    idx2 = max(idx1, min(M, stepEnds(k)));
+                    L_gate = max(8, idx2 - idx1 + 1);
+
+                    % Center the L_gate excitation window on the step's burst peak
+                    w1 = max(1, idx1 - winPre);
+                    w2 = min(M, idx2 + winPost);
+                    [~, pkRel] = max(abs(obj.AudioData(w1:w2)));
+                    pkAbs = w1 + pkRel - 1;
+                    c1 = max(1, pkAbs - floor(L_gate / 2));
+                    c2 = min(M, c1 + L_gate - 1);
+                    sigStep = obj.AudioData(c1:c2);
+                    L_step = length(sigStep);
+
+                    % Windowed single-sided FFT normalized by step length L_step
+                    nfft = max(4096, 2^nextpow2(L_step));
+                    Y = fft(sigStep, nfft);
+                    P2 = abs(Y / L_step);
+                    P1 = P2(1:floor(nfft/2) + 1);
+                    P1(2:end-1) = 2 * P1(2:end-1);
+                    f_axis = fs * (0:(nfft/2)) / nfft;
+
+                    bandMask = abs(f_axis - f_steps(k)) <= 100;
+                    if any(bandMask)
+                        amp_step(k) = max(P1(bandMask));
+                    else
+                        [~, idxFk] = min(abs(f_axis - f_steps(k)));
+                        amp_step(k) = P1(idxFk);
+                    end
                 end
 
-                % Single clean raw line with solid markers directly on measured steps
+                % Single clean frequency-domain line with solid markers on measured steps
                 hLine = plot(f_steps, amp_step, 'b-o', 'LineWidth', 1.5, ...
                     'MarkerSize', 6, 'MarkerFaceColor', [0.20, 0.60, 1.0], ...
-                    'DisplayName', 'Raw Peak Amplitude');
+                    'DisplayName', 'Windowed Step FFT |Y(f_k)|');
 
                 try
                     hLine.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.0f Hz');
-                    hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('Raw Peak Amp', 'YData', '%.5f');
+                    hLine.DataTipTemplate.DataTipRows(2) = dataTipTextRow('Step FFT |Y(f)|', 'YData', '%.5f');
                 catch
                 end
 
@@ -620,24 +648,53 @@ classdef AudioAnalyzer < handle
             Duration_s    = zeros(numSteps, 1);
             Step_RMS      = zeros(numSteps, 1);
             Step_Peak_Amp = zeros(numSteps, 1);
+            Step_FFT_Amp  = zeros(numSteps, 1);
             Energy_dB     = zeros(numSteps, 1);
+
+            winPre  = round(0.015 * fs);
+            winPost = round(0.035 * fs);
 
             for k = 1:numSteps
                 idx1 = max(1, min(M, stepOnsets(k)));
                 idx2 = max(idx1, min(M, stepEnds(k)));
+                L_gate = max(8, idx2 - idx1 + 1);
 
                 sigStep = obj.AudioData(idx1:idx2);
+
+                % Windowed single-sided FFT centered on the step's active burst
+                w1 = max(1, idx1 - winPre);
+                w2 = min(M, idx2 + winPost);
+                [~, pkRel] = max(abs(obj.AudioData(w1:w2)));
+                pkAbs = w1 + pkRel - 1;
+                c1 = max(1, pkAbs - floor(L_gate / 2));
+                c2 = min(M, c1 + L_gate - 1);
+                sigBurst = obj.AudioData(c1:c2);
+                L_b = length(sigBurst);
+                nfft = max(4096, 2^nextpow2(L_b));
+                Y = fft(sigBurst, nfft);
+                P2 = abs(Y / L_b);
+                P1 = P2(1:floor(nfft/2) + 1);
+                P1(2:end-1) = 2 * P1(2:end-1);
+                f_axis = fs * (0:(nfft/2)) / nfft;
+                bandMask = abs(f_axis - stepFreqs(k)) <= 100;
+                if any(bandMask)
+                    fftAmp = max(P1(bandMask));
+                else
+                    [~, idxFk] = min(abs(f_axis - stepFreqs(k)));
+                    fftAmp = P1(idxFk);
+                end
 
                 Freq_Hz(k)       = stepFreqs(k);
                 Onset_Time_s(k)  = round(obj.TimeVector(idx1), 4);
                 Duration_s(k)    = round((idx2 - idx1 + 1) / fs, 4);
                 Step_RMS(k)      = round(rms(sigStep), 6);
                 Step_Peak_Amp(k) = round(max(abs(sigStep)), 6);
+                Step_FFT_Amp(k)  = round(fftAmp, 6);
                 Energy_dB(k)     = round(20 * log10(Step_RMS(k) + eps), 3);
             end
 
             featTable = table(Step_ID, Freq_Hz, Onset_Time_s, Duration_s, ...
-                Step_RMS, Step_Peak_Amp, Energy_dB);
+                Step_RMS, Step_Peak_Amp, Step_FFT_Amp, Energy_dB);
 
             if nargin >= 2 && ~isempty(outputCsvPath)
                 [pDir, ~, ~] = fileparts(outputCsvPath);

@@ -1,8 +1,0 @@
-Metric,Value,Unit,Criteria,Status
-Num_Repeats,1,repeats,N >= 5 recommended,PASS
-Mean_CV_pct,nan,%,"CV <= 5.0% (Pass), <= 10.0% (Usable)",N/A
-Mean_STDEV_dB,nan,dB,"SD <= 0.50 dB (Pass), <= 1.00 dB (Usable)",N/A
-Max_Peak_Amplitude,0.6308,normalized (0-1),Peak < 0.98 (No clipping),PASS
-Clipping_Sample_Count,0,samples,0 samples (Pass),PASS
-Total_Duration_s,6.132,seconds,>= 5.0 s,PASS
-Data_Quality_Verdict,SINGLE_TRIAL_VALID,category,Grade A / B valid for analysis,VALID
