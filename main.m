@@ -246,10 +246,12 @@ function main(targetTrial, forceReprocess)
         featureEngine.TitlePrefix = sprintf('%s-%s', trialName, sampleName);
 
         % Generate 1-Click Interactive Hyperlinks for MATLAB Command Window
+        profFigPath = fullfile(targetDir, 'record_profile.fig');
         ampFigPath  = fullfile(targetDir, 'amplitude.fig');
         freqFigPath = fullfile(targetDir, 'frequency.fig');
         specFigPath = fullfile(targetDir, 'spectrogram.fig');
 
+        profFig = strrep(profFigPath, '\', '/');
         ampFig  = strrep(ampFigPath, '\', '/');
         freqFig = strrep(freqFigPath, '\', '/');
         specFig = strrep(specFigPath, '\', '/');
@@ -257,12 +259,13 @@ function main(targetTrial, forceReprocess)
         profCsv = strrep(profCsvPath, '\', '/');
         fDir    = strrep(targetDir, '\', '/');
 
-        linkFeat = sprintf('<a href="matlab:open(''%s'');">[Features CSV]</a>', featCsv);
-        linkProf = sprintf('<a href="matlab:open(''%s'');">[Quality Profile]</a>', profCsv);
-        linkAmp  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a>', ampFig);
-        linkFreq = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a>', freqFig);
-        linkSpec = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', specFig);
-        linkDir  = sprintf('<a href="matlab:winopen(''%s'');">[Folder]</a>', fDir);
+        linkFeat  = sprintf('<a href="matlab:open(''%s'');">[Features CSV]</a>', featCsv);
+        linkProf  = sprintf('<a href="matlab:open(''%s'');">[Quality CSV]</a>', profCsv);
+        linkPFig  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Profile.fig]</a>', profFig);
+        linkAmp   = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Amplitude.fig]</a>', ampFig);
+        linkFreq  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Frequency.fig]</a>', freqFig);
+        linkSpec  = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Spectrogram.fig]</a>', specFig);
+        linkDir   = sprintf('<a href="matlab:winopen(''%s'');">[Folder]</a>', fDir);
 
         % Check if Stage 2 outputs already exist and are newer than the logged CSV
         stage2UpToDate = false;
@@ -284,8 +287,8 @@ function main(targetTrial, forceReprocess)
         end
 
         if stage2UpToDate
-            fprintf('  [STAGE 2 SKIP] %-20s (Already Analyzed) -> %s %s %s %s %s | %s\n', ...
-                sampleName, linkProf, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
+            fprintf('  [STAGE 2 SKIP] %-20s (Already Analyzed) -> %s %s %s %s %s %s | %s\n', ...
+                sampleName, linkProf, linkPFig, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
             continue;
         end
 
@@ -305,8 +308,8 @@ function main(targetTrial, forceReprocess)
             catch
             end
 
-            fprintf('  [STAGE 2 OK]   %-20s [%-18s] -> %s %s %s %s %s | %s\n', ...
-                sampleName, verdictStr, linkProf, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
+            fprintf('  [STAGE 2 OK]   %-20s [%-18s] -> %s %s %s %s %s %s | %s\n', ...
+                sampleName, verdictStr, linkProf, linkPFig, linkFeat, linkAmp, linkFreq, linkSpec, linkDir);
 
         catch ME
             fprintf(2, '  [ERROR] Feature extraction failed for %s: %s\n', csvPath, ME.message);

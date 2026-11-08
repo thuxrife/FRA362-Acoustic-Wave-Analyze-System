@@ -175,6 +175,13 @@ classdef AudioAnalyzer < handle
             obj.RepeatDataMatrix = repMat;
             obj.RawAudioData = mean(repMat, 2);
             obj.applyTimeWindow();
+
+            if numReps > 1
+                repMat = obj.alignRepeatsPerStep(repMat);
+                obj.RepeatDataMatrix = repMat;
+                obj.RawAudioData = mean(repMat, 2);
+                obj.applyTimeWindow();
+            end
         end
 
         function setTimeRange(obj, timeRange)
@@ -539,21 +546,6 @@ classdef AudioAnalyzer < handle
                 error('CSV file "%s" does not contain Amp_Avg, Amplitude, or Amp_1 column.', csvFilePath);
             end
 
-            % Reconstruct RepeatDataMatrix from Amp_1..Amp_N columns if present
-            ampCols = colNames(~cellfun(@isempty, regexp(colNames, '^Amp_\d+$')));
-            if ~isempty(ampCols)
-                repMat = zeros(height(T_raw), length(ampCols));
-                for r = 1:length(ampCols)
-                    repMat(:, r) = T_raw.(ampCols{r})(:);
-                end
-                obj.RepeatDataMatrix = repMat;
-            else
-                obj.RepeatDataMatrix = obj.AudioData(:);
-            end
-
-            obj.RawAudioData = obj.AudioData;
-            obj.NumChannels = 1;
-
             if length(obj.TimeVector) > 1
                 dt = median(diff(obj.TimeVector));
                 obj.SampleRate = round(1 / dt);
@@ -564,6 +556,31 @@ classdef AudioAnalyzer < handle
                 obj.ReferencePeakTime = abs(obj.TimeVector(1));
                 obj.PreTriggerSeconds = abs(obj.TimeVector(1));
             end
+
+            % Reconstruct RepeatDataMatrix from Amp_1..Amp_N columns and phase-align per step
+            ampCols = colNames(~cellfun(@isempty, regexp(colNames, '^Amp_\d+$')));
+            if ~isempty(ampCols)
+                repMat = zeros(height(T_raw), length(ampCols));
+                for r = 1:length(ampCols)
+                    repMat(:, r) = T_raw.(ampCols{r})(:);
+                end
+                if size(repMat, 2) > 1
+                    repMat = obj.alignRepeatsPerStep(repMat, T_raw);
+                    for r = 1:length(ampCols)
+                        T_raw.(ampCols{r}) = repMat(:, r);
+                    end
+                    obj.AudioData = mean(repMat, 2);
+                    if ismember('Amp_Avg', colNames)
+                        T_raw.Amp_Avg = obj.AudioData;
+                    end
+                end
+                obj.RepeatDataMatrix = repMat;
+            else
+                obj.RepeatDataMatrix = obj.AudioData(:);
+            end
+
+            obj.RawAudioData = obj.AudioData;
+            obj.NumChannels = 1;
         end
 
         function featTable = extractStepFeatures(obj, outputCsvPath, T_raw)
@@ -632,21 +649,32 @@ classdef AudioAnalyzer < handle
         end
 
         function profileTable = exportRecordProfile(obj, outputFilePath, T_raw)
-            % Evaluates data quality, cross-repeat correlation (r), noise floor (SD in dB),
-            % and microphone clipping, exporting record_profile.csv to the analysis folder.
+            % Evaluates data quality using Range [Min - Max] across all 16 frequencies for
+            % Coefficient of Variation (CV%), STDEV (dB), and Peak-to-Peak Repeat Span (dB),
+            % exporting record_profile.csv and an interactive box plot (record_profile.fig).
             numReps = size(obj.RepeatDataMatrix, 2);
             durS = obj.Duration;
             maxPeak = max(abs(obj.AudioData));
             clipCount = sum(abs(obj.AudioData) >= 0.98);
 
-            r_mean = NaN;
-            sd_mean_db = NaN;
-            verdict = 'GRADE_A_EXCELLENT';
-            status_corr = 'N/A';
-            status_sd = 'N/A';
+            cv_min = NaN; cv_max = NaN;
+            sd_min = NaN; sd_max = NaN;
+            sp_min = NaN; sp_max = NaN;
+            passedSteps = 0;
+            numSteps = 0;
+            verdict     = 'GRADE_A_EXCELLENT';
+            status_cv   = 'N/A';
+            status_sd   = 'N/A';
+            status_step = 'N/A';
+
+            stepFreqs = (300:100:1800)';
+            stepPeaks = [];
+            stepDBs   = [];
+            step_cvs  = [];
+            db_spans  = [];
 
             if numReps >= 2 && nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
-                stepIDs = unique(T_raw.Step_ID(T_raw.Step_ID > 0));
+                stepIDs = unique(T_raw.Step_ID(T_raw.Step_ID > 0), 'stable');
                 numSteps = length(stepIDs);
                 ampCols = T_raw.Properties.VariableNames(~cellfun(@isempty, regexp(T_raw.Properties.VariableNames, '^Amp_\d+$')));
                 if isempty(ampCols)
@@ -654,19 +682,40 @@ classdef AudioAnalyzer < handle
                 end
                 actReps = min(numReps, length(ampCols));
 
+                if ismember('Freq_Input', T_raw.Properties.VariableNames)
+                    fCol = T_raw.Freq_Input;
+                elseif ismember('Freq_Hz', T_raw.Properties.VariableNames)
+                    fCol = T_raw.Freq_Hz;
+                else
+                    fCol = zeros(height(T_raw), 1);
+                end
+
                 if numSteps >= 4 && actReps >= 2
-                    stepDBs = zeros(numSteps, actReps);
+                    stepFreqs = zeros(numSteps, 1);
+                    stepPeaks = zeros(numSteps, actReps);
+                    stepDBs   = zeros(numSteps, actReps);
+                    padSamples = round(0.015 * obj.SampleRate);
+                    N_rows = height(T_raw);
+
                     for sIdx = 1:numSteps
                         sID = stepIDs(sIdx);
-                        subIdx = (T_raw.Step_ID == sID);
+                        mask = (T_raw.Step_ID == sID);
+                        stepFreqs(sIdx) = median(fCol(mask));
+                        iStart = find(mask, 1, 'first');
+                        iEnd   = find(mask, 1, 'last');
+                        idx1 = max(1, iStart - padSamples);
+                        idx2 = min(N_rows, iEnd + padSamples);
+
                         for rIdx = 1:actReps
                             cName = ampCols{rIdx};
                             if ismember(cName, T_raw.Properties.VariableNames)
-                                rSig = T_raw.(cName)(subIdx);
+                                rSig = T_raw.(cName)(idx1:idx2);
                             else
-                                rSig = obj.RepeatDataMatrix(subIdx, rIdx);
+                                rSig = obj.RepeatDataMatrix(idx1:idx2, rIdx);
                             end
+                            pkVal  = max(abs(rSig));
                             rmsVal = sqrt(mean(rSig.^2));
+                            stepPeaks(sIdx, rIdx) = pkVal;
                             if rmsVal > 0
                                 stepDBs(sIdx, rIdx) = 20 * log10(rmsVal);
                             else
@@ -675,30 +724,48 @@ classdef AudioAnalyzer < handle
                         end
                     end
 
-                    R_mat = corrcoef(stepDBs);
-                    triuIdx = find(triu(ones(actReps), 1));
-                    if ~isempty(triuIdx)
-                        pair_r = R_mat(triuIdx);
-                        r_mean = mean(pair_r(~isnan(pair_r)));
-                    end
+                    % 1. Per-frequency CV (%) using spectrum median floor to avoid deficit-frequency bias
+                    step_means = mean(stepPeaks, 2);
+                    ref_denom  = max(step_means, median(step_means));
+                    step_pk_sd = std(stepPeaks, 0, 2);
+                    step_cvs   = (step_pk_sd ./ max(ref_denom, 1e-6)) * 100;
 
+                    cv_min = min(step_cvs);
+                    cv_max = max(step_cvs);
+
+                    % 2. Per-frequency STDEV in dB & Peak-to-Peak Range (Max - Min) in dB
                     step_sds = std(stepDBs, 0, 2);
-                    sd_mean_db = mean(step_sds(~isnan(step_sds)));
+                    sd_min   = min(step_sds);
+                    sd_max   = max(step_sds);
 
-                    if r_mean >= 0.88
-                        status_corr = 'PASS';
-                    elseif r_mean >= 0.70
-                        status_corr = 'WARNING';
+                    db_spans = max(stepDBs, [], 2) - min(stepDBs, [], 2);
+                    sp_min   = min(db_spans);
+                    sp_max   = max(db_spans);
+
+                    passedSteps = sum(step_cvs <= 5.5);
+
+                    if cv_max <= 5.5
+                        status_cv = 'PASS';
+                    elseif cv_max <= 10.0
+                        status_cv = 'WARNING';
                     else
-                        status_corr = 'FAIL';
+                        status_cv = 'FAIL';
                     end
 
-                    if sd_mean_db <= 2.0
+                    if sd_max <= 0.50
                         status_sd = 'PASS';
-                    elseif sd_mean_db <= 3.5
+                    elseif sd_max <= 1.00
                         status_sd = 'WARNING';
                     else
                         status_sd = 'FAIL';
+                    end
+
+                    if passedSteps == numSteps
+                        status_step = 'PASS';
+                    elseif sum(step_cvs <= 10.0) == numSteps
+                        status_step = 'WARNING';
+                    else
+                        status_step = 'FAIL';
                     end
                 end
             end
@@ -711,10 +778,12 @@ classdef AudioAnalyzer < handle
             end
 
             if clipCount == 0
-                if numReps >= 2
-                    if (isnan(r_mean) || r_mean >= 0.88) && (isnan(sd_mean_db) || sd_mean_db <= 2.0)
+                if maxPeak < 0.005
+                    verdict = 'GRADE_C_NOISY_RE_RECORD';
+                elseif numReps >= 2
+                    if (isnan(cv_max) || cv_max <= 5.5) && (isnan(sd_max) || sd_max <= 0.50)
                         verdict = 'GRADE_A_EXCELLENT';
-                    elseif (r_mean >= 0.70) && (sd_mean_db <= 3.5)
+                    elseif (cv_max <= 10.0) && (sd_max <= 1.00)
                         verdict = 'GRADE_B_USABLE';
                     else
                         verdict = 'GRADE_C_NOISY_RE_RECORD';
@@ -731,8 +800,10 @@ classdef AudioAnalyzer < handle
 
             Metric = {
                 'Num_Repeats';
-                'Repeat_Correlation_r';
-                'Mean_Repeat_SD_dB';
+                'CV_Range_pct';
+                'STDEV_Range_dB';
+                'Repeat_Span_Range_dB';
+                'Valid_Freq_Steps';
                 'Max_Peak_Amplitude';
                 'Clipping_Sample_Count';
                 'Total_Duration_s';
@@ -741,8 +812,10 @@ classdef AudioAnalyzer < handle
 
             Value = {
                 sprintf('%d', numReps);
-                sprintf('%.4f', r_mean);
-                sprintf('%.2f', sd_mean_db);
+                sprintf('%.2f - %.2f (Span: %.2f)', cv_min, cv_max, cv_max - cv_min);
+                sprintf('%.2f - %.2f (Span: %.2f)', sd_min, sd_max, sd_max - sd_min);
+                sprintf('%.2f - %.2f', sp_min, sp_max);
+                sprintf('%d / %d', passedSteps, numSteps);
                 sprintf('%.4f', maxPeak);
                 sprintf('%d', clipCount);
                 sprintf('%.3f', durS);
@@ -751,8 +824,10 @@ classdef AudioAnalyzer < handle
 
             Unit = {
                 'repeats';
-                'dimensionless';
+                '%';
                 'dB';
+                'dB (Max-Min)';
+                'steps';
                 'normalized (0-1)';
                 'samples';
                 'seconds';
@@ -761,8 +836,10 @@ classdef AudioAnalyzer < handle
 
             Criteria = {
                 'N >= 5 recommended';
-                'r >= 0.85 (Pass), >= 0.70 (Usable)';
-                'SD <= 2.0 dB (Pass), <= 3.5 dB (Usable)';
+                'Max CV <= 5.5% (Pass), <= 10.0% (Usable)';
+                'Max SD <= 0.50 dB (Pass), <= 1.00 dB (Usable)';
+                'Max-Min spread across repeats';
+                'All 16 frequencies <= 5.5% CV';
                 'Peak < 0.98 (No clipping)';
                 '0 samples (Pass)';
                 '>= 5.0 s';
@@ -771,8 +848,10 @@ classdef AudioAnalyzer < handle
 
             Status = {
                 'PASS';
-                status_corr;
+                status_cv;
                 status_sd;
+                status_sd;
+                status_step;
                 status_clip;
                 status_clip;
                 'PASS';
@@ -786,12 +865,215 @@ classdef AudioAnalyzer < handle
                 if ~isempty(pDir) && ~exist(pDir, 'dir')
                     mkdir(pDir);
                 end
-                writetable(profileTable, outputFilePath);
+                try
+                    writetable(profileTable, outputFilePath);
+                catch ME
+                    warning('Could not write %s (file may be open in another program): %s', outputFilePath, ME.message);
+                end
+
+                if ~isempty(stepPeaks) && size(stepPeaks, 2) >= 2
+                    profFigPath = fullfile(pDir, 'record_profile.fig');
+                    obj.plotRecordProfile(profFigPath, stepFreqs, stepPeaks, stepDBs, step_cvs, db_spans, verdict);
+                end
             end
+        end
+
+        function plotRecordProfile(obj, outputFigPath, stepFreqs, stepPeaks, stepDBs, step_cvs, db_spans, verdict)
+            % Generates a 2-panel interactive Box Plot & Per-Frequency Uncertainty Distribution (.fig)
+            fig = obj.createFigure();
+            set(fig, 'Name', 'Per-Frequency Repeat Distribution & Box Plot', 'Position', [100, 70, 1180, 780]);
+
+            numSteps = length(stepFreqs);
+            actReps  = size(stepPeaks, 2);
+
+            % --- Subplot 1: Box-and-Whisker Plot of Repeat Amplitudes per Frequency ---
+            ax1 = subplot(2, 1, 1);
+            hold(ax1, 'on'); grid(ax1, 'on'); box(ax1, 'on');
+
+            boxHalfW = 22;
+            capHalfW = 12;
+
+            for k = 1:numSteps
+                f_k  = stepFreqs(k);
+                vals = sort(stepPeaks(k, :));
+                vMin = vals(1);
+                vMax = vals(end);
+                vMed = median(vals);
+                nV   = length(vals);
+                q25  = vals(max(1, round(0.25 * nV)));
+                q75  = vals(min(nV, round(0.75 * nV)));
+
+                % Min-Max Range Whisker
+                plot(ax1, [f_k, f_k], [vMin, vMax], '-', 'Color', [0.35, 0.45, 0.60], 'LineWidth', 1.4, 'HandleVisibility', 'off');
+                plot(ax1, [f_k - capHalfW, f_k + capHalfW], [vMin, vMin], '-', 'Color', [0.35, 0.45, 0.60], 'LineWidth', 1.4, 'HandleVisibility', 'off');
+                plot(ax1, [f_k - capHalfW, f_k + capHalfW], [vMax, vMax], '-', 'Color', [0.35, 0.45, 0.60], 'LineWidth', 1.4, 'HandleVisibility', 'off');
+
+                % 25th-75th IQR Box
+                boxH = max(q75 - q25, 0.0015);
+                patch(ax1, [f_k - boxHalfW, f_k + boxHalfW, f_k + boxHalfW, f_k - boxHalfW], ...
+                           [q25, q25, q25 + boxH, q25 + boxH], [0.15, 0.52, 0.85], ...
+                           'FaceAlpha', 0.35, 'EdgeColor', [0.10, 0.40, 0.75], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+
+                % Median Line
+                plot(ax1, [f_k - boxHalfW, f_k + boxHalfW], [vMed, vMed], '-', 'Color', [0.90, 0.25, 0.15], 'LineWidth', 2.0, 'HandleVisibility', 'off');
+
+                % Individual Repeat Scatter Points
+                jitter = linspace(-10, 10, actReps);
+                if k == 1
+                    plot(ax1, f_k + jitter, stepPeaks(k, :), 'o', 'Color', [0.10, 0.30, 0.55], ...
+                        'MarkerFaceColor', [0.20, 0.65, 0.95], 'MarkerSize', 4.5, 'DisplayName', sprintf('Individual Repeats (N = %d)', actReps));
+                else
+                    plot(ax1, f_k + jitter, stepPeaks(k, :), 'o', 'Color', [0.10, 0.30, 0.55], ...
+                        'MarkerFaceColor', [0.20, 0.65, 0.95], 'MarkerSize', 4.5, 'HandleVisibility', 'off');
+                end
+            end
+
+            % Median Envelope Curve across Frequencies
+            medCurve = median(stepPeaks, 2);
+            plot(ax1, stepFreqs, medCurve, '-', 'Color', [0.90, 0.25, 0.15], 'LineWidth', 1.5, 'DisplayName', 'Median Response Curve');
+
+            xticks(ax1, stepFreqs);
+            xlim(ax1, [min(stepFreqs) - 60, max(stepFreqs) + 60]);
+            xlabel(ax1, 'Frequency Step (Hz)');
+            ylabel(ax1, 'Step Peak Amplitude');
+            title(ax1, obj.formatTitle(sprintf('1. Per-Frequency Box Plot & Repeat Distribution (N = %d Repeats | Verdict: %s)', ...
+                actReps, verdict)), 'Interpreter', 'none');
+            legend(ax1, 'Location', 'northwest');
+            hold(ax1, 'off');
+
+            % --- Subplot 2: Per-Frequency CV (%) & Range Spread ---
+            ax2 = subplot(2, 1, 2);
+            hold(ax2, 'on'); grid(ax2, 'on'); box(ax2, 'on');
+
+            b = bar(ax2, stepFreqs, step_cvs, 0.55, 'FaceColor', 'flat', 'EdgeColor', 'none', 'DisplayName', 'Per-Frequency C.V. (%)');
+            for k = 1:numSteps
+                if step_cvs(k) <= 5.5
+                    b.CData(k, :) = [0.15, 0.68, 0.38]; % Pass Green
+                elseif step_cvs(k) <= 10.0
+                    b.CData(k, :) = [0.95, 0.60, 0.15]; % Warning Orange
+                else
+                    b.CData(k, :) = [0.90, 0.22, 0.24]; % Deficit Red
+                end
+                text(ax2, stepFreqs(k), step_cvs(k) + max(0.25, 0.04 * max(step_cvs)), ...
+                    sprintf('%.1f%%\n(\\Delta%.2fdB)', step_cvs(k), db_spans(k)), ...
+                    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 7.5);
+            end
+
+            yline(ax2, 5.5, '--', 'Pass Limit (5.5%)', 'Color', [0.12, 0.55, 0.30], 'LineWidth', 1.3, 'LabelHorizontalAlignment', 'left');
+            xticks(ax2, stepFreqs);
+            xlim(ax2, [min(stepFreqs) - 60, max(stepFreqs) + 60]);
+            ylim(ax2, [0, max(7.0, max(step_cvs) * 1.28)]);
+            xlabel(ax2, 'Frequency Step (Hz)');
+            ylabel(ax2, 'Normalized C.V. (%)');
+            title(ax2, sprintf('2. Per-Frequency Spread | C.V. Range: [%.2f%% to %.2f%%] | Max-Min dB Span: [%.2f to %.2f dB]', ...
+                min(step_cvs), max(step_cvs), min(db_spans), max(db_spans)), 'Interpreter', 'none');
+            hold(ax2, 'off');
+
+            if nargin >= 2 && ~isempty(outputFigPath)
+                obj.exportFigure(fig, outputFigPath);
+            end
+            obj.closeFigure(fig);
         end
     end
 
     methods (Access = private)
+        function alignedMat = alignRepeatsPerStep(obj, repMat, T_raw)
+            % Phase-aligns all N repeats at each of the 16 frequency steps via local
+            % cross-correlation to eliminate soundcard clock drift and destructive phase cancellation.
+            [M, N] = size(repMat);
+            alignedMat = repMat;
+            if N < 2 || M < 100
+                return;
+            end
+
+            fs = obj.SampleRate;
+            if isempty(fs) || fs <= 0
+                fs = 44100;
+            end
+
+            if nargin >= 3 && ~isempty(T_raw) && ismember('Step_ID', T_raw.Properties.VariableNames)
+                uSteps = unique(T_raw.Step_ID(T_raw.Step_ID > 0), 'stable');
+                numSteps = length(uSteps);
+                stepStarts = zeros(numSteps, 1);
+                for k = 1:numSteps
+                    stepStarts(k) = find(T_raw.Step_ID == uSteps(k), 1, 'first');
+                end
+            else
+                [stepStarts, ~, ~] = obj.detectFrequencySteps();
+                numSteps = length(stepStarts);
+            end
+
+            if numSteps < 2
+                return;
+            end
+
+            winPre  = round(0.015 * fs);
+            winPost = round(0.035 * fs);
+            maxLag  = round(0.025 * fs);
+
+            for k = 1:numSteps
+                i0 = stepStarts(k);
+                if k == 1
+                    seg1 = 1;
+                else
+                    seg1 = floor((stepStarts(k-1) + stepStarts(k)) / 2);
+                end
+                if k == numSteps
+                    seg2 = M;
+                else
+                    seg2 = floor((stepStarts(k) + stepStarts(k+1)) / 2) - 1;
+                end
+
+                w1 = max(1, i0 - winPre);
+                w2 = min(M, i0 + winPost);
+                if w2 <= w1 + 10
+                    continue;
+                end
+
+                % Pick the repeat whose burst peak is closest to the median peak index
+                pkLocs = zeros(1, N);
+                for r = 1:N
+                    [~, pkLocs(r)] = max(abs(repMat(w1:w2, r)));
+                end
+                medPk = median(pkLocs);
+                [~, refR] = min(abs(pkLocs - medPk));
+                refBurst = repMat(w1:w2, refR);
+
+                for r = 1:N
+                    if r == refR
+                        continue;
+                    end
+                    candBurst = repMat(w1:w2, r);
+                    % Direct dot-product cross-correlation over [-maxLag, +maxLag]
+                    bestScore = -inf;
+                    bestLag = 0;
+                    L_b = length(refBurst);
+                    effMaxLag = min(maxLag, floor(L_b / 2));
+                    for lag = -effMaxLag:effMaxLag
+                        if lag >= 0
+                            sc = sum(candBurst(1+lag:L_b) .* refBurst(1:L_b-lag));
+                        else
+                            sh = -lag;
+                            sc = sum(candBurst(1:L_b-sh) .* refBurst(1+sh:L_b));
+                        end
+                        if sc > bestScore
+                            bestScore = sc;
+                            bestLag = lag;
+                        end
+                    end
+
+                    seg = repMat(seg1:seg2, r);
+                    L_seg = length(seg);
+                    if bestLag > 0 && bestLag < L_seg
+                        alignedMat(seg1:seg2, r) = [seg(1+bestLag:end); zeros(bestLag, 1)];
+                    elseif bestLag < 0 && (-bestLag) < L_seg
+                        sh = -bestLag;
+                        alignedMat(seg1:seg2, r) = [zeros(sh, 1); seg(1:end-sh)];
+                    end
+                end
+            end
+        end
+
         function [stepOnsets, stepEnds, stepFreqs] = detectFrequencySteps(obj, ~)
             % Deterministically maps all 16 frequency steps from the active stimulus schedule
             % aligned to t = 0.0s so zero frequency steps are ever filtered or cut out.

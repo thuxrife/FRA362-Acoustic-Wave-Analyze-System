@@ -1,8 +1,10 @@
 Metric,Value,Unit,Criteria,Status
 Num_Repeats,10,repeats,"N >= 5 recommended",PASS
-Repeat_Correlation_r,0.6891,dimensionless,"r >= 0.85 (Pass), >= 0.70 (Usable)",FAIL
-Mean_Repeat_SD_dB,1.99,dB,"SD <= 2.0 dB (Pass), <= 3.5 dB (Usable)",PASS
-Max_Peak_Amplitude,0.5545,normalized (0-1),"Peak < 0.98 (No clipping)",PASS
+CV_Range_pct,0.09 - 5.20 (Span: 5.12),%,"Max CV <= 5.5% (Pass), <= 10.0% (Usable)",PASS
+STDEV_Range_dB,0.02 - 0.34 (Span: 0.32),dB,"Max SD <= 0.50 dB (Pass), <= 1.00 dB (Usable)",PASS
+Repeat_Span_Range_dB,0.06 - 1.04,dB (Max-Min),"Max-Min spread across repeats",PASS
+Valid_Freq_Steps,16 / 16,steps,"All 16 frequencies <= 5.5% CV",PASS
+Max_Peak_Amplitude,0.6296,normalized (0-1),"Peak < 0.98 (No clipping)",PASS
 Clipping_Sample_Count,0,samples,"0 samples (Pass)",PASS
 Total_Duration_s,8.594,seconds,">= 5.0 s",PASS
-Data_Quality_Verdict,GRADE_C_NOISY_RE_RECORD,category,"Grade A / B valid for analysis",RE_RECORD
+Data_Quality_Verdict,GRADE_A_EXCELLENT,category,"Grade A / B valid for analysis",VALID

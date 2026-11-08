@@ -1,8 +1,8 @@
-Metric,Value,Unit,Threshold_Criteria,Status
+Metric,Value,Unit,Criteria,Status
 Num_Repeats,5,repeats,N >= 5 recommended,PASS
-Repeat_Correlation_r,0.4251,dimensionless,"r >= 0.85 (Pass), >= 0.70 (Usable)",FAIL
-Mean_Repeat_SD_dB,3.68,dB,"SD <= 2.0 dB (Pass), <= 3.5 dB (Usable)",FAIL
+Mean_CV_pct,1.81,%,"CV <= 5.0% (Pass), <= 10.0% (Usable)",PASS
+Mean_STDEV_dB,0.14,dB,"SD <= 0.50 dB (Pass), <= 1.00 dB (Usable)",PASS
 Max_Peak_Amplitude,0.4725,normalized (0-1),Peak < 0.98 (No clipping),PASS
 Clipping_Sample_Count,0,samples,0 samples (Pass),PASS
-Total_Duration_s,8.473,seconds,>= 5.0 s,PASS
-Data_Quality_Verdict,GRADE_C_NOISY_RE_RECORD,category,Grade A / B valid for analysis,RE_RECORD
+Total_Duration_s,8.594,seconds,>= 5.0 s,PASS
+Data_Quality_Verdict,GRADE_A_EXCELLENT,category,Grade A / B valid for analysis,VALID
