@@ -45,14 +45,17 @@ FRA362-Acoustic-Wave-Analyze-System/
 │   │       ├── frequency.fig                     <-- Single-sided FFT spectrum with cut-off guide
 │   │       └── spectrogram.fig                   <-- Time-frequency power distribution (dBFS)
 │   │
-│   └── overlay/                                  <-- Multi-experiment comparison outputs
-│       └── {comparison_name}/
-│           └── {comparison_name}.fig             <-- Overlaid curves or differential spectrogram
+│   ├── overlay/{domain}/                         <-- Raw multi-curve comparison overlays (amplitude, frequency, spectrogram)
+│   ├── envelope/{domain}/                        <-- Envelope analytic curve comparisons (amplitude, frequency, spectrogram)
+│   └── blockage/{task_name}/                     <-- Quantitative blockage assessment models (Delta dB, Area %)
 │
 ├── AudioAnalyzer.m                               <-- Core Object-Oriented acoustic analysis engine
 ├── record_acoustic_sample.m                      <-- Script 1: Audio Interface & Recorder GUI
 ├── main.m                                        <-- Script 2: Master Batch Pipeline (mp3 -> logged -> analyze)
-├── overlay_figures.m                             <-- Multi-figure comparison & overlay tool
+├── overlay_figures.m                             <-- Tool 1: Raw trace overlay comparison
+├── plot_envelope_overlay.m                       <-- Tool 2: Envelope trace overlay comparison
+├── plot_acoustic_reflex_map.m                    <-- Spectrogram / Time-of-Flight Heatmap engine
+├── plot_blockage_analysis.m                      <-- Tool 3: Quantitative acoustic blockage assessment
 ├── log_raw_data.m                                <-- Standalone Stage 1 module (mp3 -> logged)
 ├── extract_features.m                            <-- Standalone Stage 2 module (logged -> analyze)
 ├── generate_sound_input.m                        <-- Pure speaker excitation audio generator

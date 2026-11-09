@@ -1,29 +1,32 @@
-function outFigPath = overlay_figures(figPaths, taskName, showPlot)
-%% Acoustic Figure Overlay & Comparison Engine
-% Ingests an array or comma-separated string of MATLAB .fig files.
-% Automatically detects the figure type:
-%   - 1D Line Curves (frequency.fig, amplitude.fig): Overlays curves onto a single high-contrast axes.
-%   - 2D Heatmaps (spectrogram.fig): Generates synchronized multi-panel subplots with
-%     Differential Attenuation Spectrogram (Delta dB = dB_A - dB_B) and linked zoom/pan.
+function [outFigPath, fig] = overlay_figures(figPaths, taskName, showPlot)
+%% Acoustic Trace Overlay Engine (Raw Data Mode)
+% Overlays raw data traces across multiple conditions onto a single standalone graph.
+% Automatically detects the input domain and saves to:
+%   - analyze/overlay/amplitude/{taskName}.fig
+%   - analyze/overlay/frequency/{taskName}.fig
+%   - analyze/overlay/spectrogram/{taskName}.fig
+%
+% Aesthetics:
+%   Clean IEEE/engineering style: pure white background ('w'), crisp black axes,
+%   material depth-of-color lines with distinct markers, subtle grid, and no dark themes.
 %
 % Usage:
 %   overlay_figures('analyze/.../frequency.fig, analyze/.../frequency.fig', 'freq_compare');
-%   overlay_figures('analyze/.../spectrogram.fig, analyze/.../spectrogram.fig', 'spectrogram_diff');
-%   overlay_figures(); % Interactive prompt
+%   overlay_figures(); % Opens interactive GUI prompt
 
     OUTPUT_ROOT = fullfile('analyze', 'overlay');
 
     %% 1. Interactive Input Dialog if Arguments Omitted
     if nargin < 1 || isempty(figPaths)
         prompt = {
-            sprintf('Enter relative paths to .fig files (separated by comma ","):'), ...
-            'Comparison / Task Name (saves to analyze/overlay/{taskName}):'
+            sprintf('Enter relative .fig or .csv paths separated by comma ",":\n(e.g., analyze/.../frequency.fig, analyze/.../frequency.fig)'), ...
+            'Overlay Task Name (saves to analyze/overlay/{domain}/{taskName}.fig):'
         };
-        dlgtitle = 'Acoustic Figure Overlay Input';
+        dlgtitle = 'Raw Data Trace Overlay (Single Graph)';
         dims = [4, 95; 1, 95];
         defaultName = sprintf('overlay_%s', char(datetime('now', 'Format', 'yyyyMMdd_HHmmss')));
         definput = {
-            'analyze/2026-11-06-sound-sample-test/sound_sample_01_sand-1-piece-front/spectrogram.fig, analyze/2026-11-06-sound-sample-test/sound_sample_01_sand-1-piece/spectrogram.fig', ...
+            'analyze/2026-11-08-baseline/sound_sample_baseline/frequency.fig, analyze/2026-11-08-exp-02-sediment-area/sound_sample_clay_25_h_middle/frequency.fig, analyze/2026-11-08-exp-02-sediment-area/sound_sample_clay_50_h_middle/frequency.fig', ...
             defaultName
         };
         opts.Resize = 'on';
@@ -44,15 +47,14 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
     %% 2. Parse and Clean Comma-Separated Input
     if ischar(figPaths) || isstring(figPaths)
         if ischar(figPaths) && size(figPaths, 1) > 1
-            % Flatten multi-line inputdlg char matrix into a single comma-delimited row
             figPaths = strjoin(cellstr(figPaths), ',');
         end
         rawStr = char(figPaths);
-        rawCells = strsplit(rawStr, {',', ';'});
+        rawCells = strsplit(rawStr, {',', ';', newline});
     elseif iscell(figPaths)
         rawCells = {};
         for k = 1:length(figPaths)
-            parts = strsplit(char(figPaths{k}), ',');
+            parts = strsplit(char(figPaths{k}), {',', ';', newline});
             rawCells = [rawCells, parts]; %#ok<AGROW>
         end
     else
@@ -72,7 +74,7 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
     figPaths = cleanedPaths;
 
     if isempty(figPaths)
-        error('No valid .fig paths found in the input string.');
+        error('No valid paths found in the input string.');
     end
 
     if nargin < 2 || isempty(taskName)
@@ -83,18 +85,7 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
         showPlot = true;
     end
 
-    targetDir = fullfile(OUTPUT_ROOT, taskName);
-    if ~exist(targetDir, 'dir')
-        mkdir(targetDir);
-    end
-    outFigPath = fullfile(targetDir, [taskName, '.fig']);
-
-    %% 3. Ingest Figures and Detect Data Types (Line vs Spectrogram Image)
-    fprintf('\n=================================================================\n');
-    fprintf('          Acoustic Trace Overlay & Comparison Engine             \n');
-    fprintf('=================================================================\n');
-    fprintf('Ingesting %d figure(s)...\n', length(figPaths));
-
+    %% 3. Ingest Figures / CSVs and Extract Raw Traces
     extractedData = struct('type', {}, 'label', {}, 'x', {}, 'y', {}, 'c', {}, 'xLabel', {}, 'yLabel', {});
     isSpectrogramMode = false;
 
@@ -123,17 +114,15 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
             end
             primaryAxes = srcAxes(end);
 
-            % Check for 2D Spectrogram Image first
+            % Check for 2D Spectrogram Image
             imgs = findobj(primaryAxes, 'Type', 'image');
             if ~isempty(imgs)
                 isSpectrogramMode = true;
                 bestImg = imgs(1);
-                
                 xData = bestImg.XData;
                 yData = bestImg.YData;
                 cData = bestImg.CData;
 
-                % Expand 2-element bounds into vectors if necessary
                 if length(xData) == 2 && size(cData, 2) > 2
                     xData = linspace(xData(1), xData(2), size(cData, 2));
                 end
@@ -152,7 +141,6 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
                 extractedData(end+1) = entry; %#ok<AGROW>
 
                 close(srcFig);
-                fprintf('  [+] Ingested Spectrogram: %s [%dx%d]\n', traceLabel, size(cData, 1), size(cData, 2));
                 continue;
             end
 
@@ -179,211 +167,251 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
                 extractedData(end+1) = entry; %#ok<AGROW>
 
                 close(srcFig);
-                fprintf('  [+] Ingested Line Trace:  %s (%d points)\n', traceLabel, length(entry.x));
                 continue;
             end
-
             close(srcFig);
         catch ME
-            fprintf(2, '  [ERROR] Ingestion failed for %s: %s\n', fPath, ME.message);
+            fprintf(2, '  [WARN] Failed to inspect %s: %s\n', fPath, ME.message);
         end
     end
 
     if isempty(extractedData)
-        error('No valid line traces or spectrogram images could be extracted from the specified files.');
+        error('No valid line or image traces could be extracted from input paths.');
     end
 
-    %% 4A. Render 2D Spectrogram Comparison (Subplots + Differential Attenuation Map)
+    %% 4. Determine Output Domain Subfolder
+    isFreq = contains(lower(string(extractedData(1).xLabel)), 'freq') || ...
+             contains(lower(string(extractedData(1).label)), 'freq');
+
     if isSpectrogramMode
+        domainFolder = 'spectrogram';
+    elseif isFreq
+        domainFolder = 'frequency';
+    else
+        domainFolder = 'amplitude';
+    end
+
+    targetDir = fullfile(OUTPUT_ROOT, domainFolder);
+    if ~exist(targetDir, 'dir'), mkdir(targetDir); end
+    outFigPath = fullfile(targetDir, [taskName, '.fig']);
+
+    %% 5. Render Standalone Single-Graph Figure (Pure White Aesthetic)
+    fig = figure('Name', sprintf('Raw Trace Overlay [%s] - %s', upper(domainFolder), taskName), ...
+        'NumberTitle', 'off', ...
+        'Color', 'w', ...
+        'Position', [120, 80, 1080, 680], ...
+        'Visible', 'off');
+
+    numTraces = length(extractedData);
+
+    % Detect whether multiple sediment types are mixed in this graph
+    allLabels = lower({extractedData.label});
+    hasClay   = any(contains(allLabels, 'clay'));
+    hasLeaf   = any(contains(allLabels, 'leaf'));
+    hasStone  = any(contains(allLabels, 'stone') | contains(allLabels, 'sand') | contains(allLabels, 'gravel'));
+    isMultiMaterial = ((hasClay + hasLeaf + hasStone) > 1);
+
+    plotColors     = zeros(numTraces, 3);
+    plotLineStyles = cell(1, numTraces);
+    plotMarkers    = cell(1, numTraces);
+    legendLabels   = cell(1, numTraces);
+
+    distinctPalette = [
+        0.15, 0.15, 0.15;  % 1: Charcoal / Baseline
+        0.00, 0.45, 0.75;  % 2: Deep Blue (25% / Front)
+        0.12, 0.65, 0.28;  % 3: Forest Green (50% / Middle)
+        0.92, 0.58, 0.05;  % 4: Amber Gold (75% / Rear)
+        0.85, 0.15, 0.15;  % 5: Ruby Red (100%)
+        0.55, 0.20, 0.70;  % 6: Purple
+        0.00, 0.65, 0.75;  % 7: Cyan
+        0.65, 0.40, 0.15   % 8: Brown
+    ];
+
+    for k = 1:numTraces
+        name = lower(extractedData(k).label);
+        isBase = contains(name, 'base') || contains(name, '0%');
+        isPos  = contains(name, 'front') || contains(name, 'middle') || contains(name, 'mid') || contains(name, 'rear') || contains(name, 'back');
+        if contains(name, '25') || contains(name, '50') || contains(name, '75')
+            isPos = false;
+        end
+
+        % All Amplitude and Frequency line traces strictly use solid lines
+        plotLineStyles{k} = '-';
+
+        % Assign Labels and Markers
+        if isPos
+            if contains(name, 'front')
+                posStr = 'Front'; plotMarkers{k} = 'o'; posFrac = 0.50;
+            elseif contains(name, 'middle') || contains(name, 'mid')
+                posStr = 'Middle'; plotMarkers{k} = 's'; posFrac = 0.75;
+            else
+                posStr = 'Rear'; plotMarkers{k} = '^'; posFrac = 1.00;
+            end
+            clean = regexprep(extractedData(k).label, '^sound_sample_', '');
+            lbl = sprintf('%s [%s]', clean, posStr);
+        elseif contains(name, '100')
+            plotMarkers{k} = '^'; posFrac = 1.00;
+            lbl = extractedData(k).label;
+        elseif contains(name, '75')
+            plotMarkers{k} = 'd'; posFrac = 0.75;
+            lbl = extractedData(k).label;
+        elseif contains(name, '50')
+            plotMarkers{k} = 'o'; posFrac = 0.50;
+            lbl = extractedData(k).label;
+        elseif contains(name, '25')
+            plotMarkers{k} = 's'; posFrac = 0.25;
+            lbl = extractedData(k).label;
+        elseif isBase
+            plotMarkers{k} = 'o'; posFrac = 0.00;
+            lbl = extractedData(k).label;
+        else
+            plotMarkers{k} = 'o'; posFrac = k / max(1, numTraces);
+            lbl = extractedData(k).label;
+        end
+        legendLabels{k} = strrep(lbl, '_', ' ');
+
+        % --- Color Assignment ---
+        if isMultiMaterial
+            % Rule 1: Mixed Sediments in 1 graph -> Enforce Sediment Color Code
+            if isBase
+                plotColors(k, :) = [0.15, 0.15, 0.15]; % Baseline Black
+            elseif contains(name, 'clay')
+                cBase = [0.90, 0.45, 0.08]; % Orange
+                plotColors(k, :) = cBase * (0.65 + 0.35 * posFrac);
+            elseif contains(name, 'leaf')
+                cBase = [0.12, 0.68, 0.28]; % Green
+                plotColors(k, :) = cBase * (0.65 + 0.35 * posFrac);
+            elseif contains(name, 'stone') || contains(name, 'sand') || contains(name, 'gravel')
+                cBase = [0.10, 0.45, 0.88]; % Blue
+                plotColors(k, :) = cBase * (0.65 + 0.35 * posFrac);
+            else
+                plotColors(k, :) = [0.55, 0.20, 0.70]; % Purple
+            end
+        else
+            % Rule 2: Single Sediment in 1 graph -> Distinct High-Contrast Colors
+            if isBase
+                plotColors(k, :) = [0.15, 0.15, 0.15]; % Baseline Black
+            elseif isPos
+                if contains(name, 'front')
+                    plotColors(k, :) = [0.00, 0.45, 0.75]; % Deep Blue
+                elseif contains(name, 'middle') || contains(name, 'mid')
+                    plotColors(k, :) = [0.90, 0.48, 0.05]; % Vivid Amber
+                else
+                    plotColors(k, :) = [0.55, 0.18, 0.60]; % Crimson Violet
+                end
+            else
+                if contains(name, '25')
+                    plotColors(k, :) = [0.00, 0.45, 0.75]; % Deep Blue
+                elseif contains(name, '50')
+                    plotColors(k, :) = [0.12, 0.65, 0.28]; % Forest Green
+                elseif contains(name, '75')
+                    plotColors(k, :) = [0.92, 0.58, 0.05]; % Amber Gold
+                elseif contains(name, '100')
+                    plotColors(k, :) = [0.85, 0.15, 0.15]; % Ruby Red
+                else
+                    plotColors(k, :) = distinctPalette(mod(k-1, size(distinctPalette, 1)) + 1, :);
+                end
+            end
+        end
+    end
+
+    if isSpectrogramMode
+        % Synchronized Spectrogram Subplots: 3 Rows x 1 Column (Stretched Horizontally)
         numSpecs = length(extractedData);
-        hasDiff = (numSpecs == 2);
-        totalPanels = numSpecs + double(hasDiff);
-
-        fig = figure('Name', sprintf('Acoustic Spectrogram Comparison - %s', taskName), ...
-            'NumberTitle', 'off', ...
-            'Color', [0.11, 0.12, 0.14], ...
-            'Position', [100, 50, 1120, min(240 * totalPanels + 100, 880)], ...
-            'Visible', 'off');
-
-        sb = uicontrol('Parent', fig, 'Style', 'text', ...
-            'String', ' [Spectrogram Tracker] Hover cursor over heatmaps to inspect time-frequency acoustic power', ...
-            'Units', 'normalized', ...
-            'Position', [0.08, 0.01, 0.88, 0.03], ...
-            'BackgroundColor', [0.15, 0.16, 0.19], ...
-            'ForegroundColor', [0.45, 0.85, 0.95], ...
-            'FontSize', 9, 'HorizontalAlignment', 'left', ...
-            'Tag', 'CoordinateStatusBar');
-
-        axList = gobjects(1, totalPanels);
+        axList = gobjects(1, numSpecs);
         f_cutoff = 0.586 * 346.0 / 0.10;
 
-        for k = 1:numSpecs
-            axList(k) = subplot(totalPanels, 1, k, 'Parent', fig);
-            imagesc(axList(k), extractedData(k).x, extractedData(k).y, extractedData(k).c);
-            axis(axList(k), 'xy');
-            colormap(axList(k), jet);
-            cb = colorbar(axList(k));
-            ylabel(cb, 'PSD (dBFS)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 8);
-            set(cb, 'Color', [0.85, 0.88, 0.92]);
+        leftM = 0.08; width = 0.81;
+        bottomM = 0.08; topM = 0.94; totalH = topM - bottomM;
+        gap = 0.04; subH = (totalH - (numSpecs - 1) * gap) / numSpecs;
 
-            title(axList(k), sprintf('[Condition %d] %s', k, extractedData(k).label), ...
-                'Color', [0.95, 0.96, 0.98], 'FontSize', 10, 'FontWeight', 'bold', 'Interpreter', 'none');
-            ylabel(axList(k), 'Freq (Hz)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 9);
-            ylim(axList(k), [0, 2200]);
-            yline(axList(k), f_cutoff, '--', sprintf('Cut-Off: %.0f Hz', f_cutoff), ...
-                'Color', [0.75, 0.78, 0.82], 'LineWidth', 1.0, 'LabelHorizontalAlignment', 'left', ...
-                'LabelColor', [0.85, 0.88, 0.92]);
-
-            set(axList(k), 'Color', [0.07, 0.08, 0.09], 'XColor', [0.65, 0.68, 0.74], 'YColor', [0.65, 0.68, 0.74]);
-        end
-
-        % Compute Differential Attenuation Map if exactly 2 spectrograms
-        if hasDiff
-            axDiff = subplot(totalPanels, 1, 3, 'Parent', fig);
-            axList(3) = axDiff;
-
-            % Align grids for subtraction
-            gridC1 = extractedData(1).c;
-            gridC2 = extractedData(2).c;
-            minR = min(size(gridC1, 1), size(gridC2, 1));
-            minC = min(size(gridC1, 2), size(gridC2, 2));
-
-            deltaDB = gridC1(1:minR, 1:minC) - gridC2(1:minR, 1:minC);
-            tCommon = extractedData(1).x(1:minC);
-            fCommon = extractedData(1).y(1:minR);
-
-            imagesc(axDiff, tCommon, fCommon, deltaDB);
-            axis(axDiff, 'xy');
-            try
-                colormap(axDiff, turbo);
-            catch
-                colormap(axDiff, jet);
-            end
-            cbDiff = colorbar(axDiff);
-            ylabel(cbDiff, '\Delta Energy (dB)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 8);
-            set(cbDiff, 'Color', [0.85, 0.88, 0.92]);
-            maxDelta = max(abs(deltaDB(:)));
-            caxis(axDiff, [-maxDelta, maxDelta]);
-
-            title(axDiff, sprintf('Differential Spectrogram: \\Delta dB = [%s] - [%s]', ...
-                extractedData(1).label, extractedData(2).label), ...
-                'Color', [1.0, 0.85, 0.25], 'FontSize', 10, 'FontWeight', 'bold', 'Interpreter', 'none');
-            xlabel(axDiff, 'Time (seconds)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 9);
-            ylabel(axDiff, 'Freq (Hz)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 9);
-            ylim(axDiff, [0, 2200]);
-            yline(axDiff, f_cutoff, '--', sprintf('Cut-Off: %.0f Hz', f_cutoff), ...
-                'Color', [0.75, 0.78, 0.82], 'LineWidth', 1.0, 'LabelHorizontalAlignment', 'left', ...
-                'LabelColor', [0.85, 0.88, 0.92]);
-
-            set(axDiff, 'Color', [0.07, 0.08, 0.09], 'XColor', [0.65, 0.68, 0.74], 'YColor', [0.65, 0.68, 0.74]);
-        else
-            xlabel(axList(end), 'Time (seconds)', 'Color', [0.85, 0.88, 0.92], 'FontSize', 9);
-        end
-
-        % Synchronize time & frequency zoom across all panels
-        linkaxes(axList, 'xy');
-
-        % Coordinate tracker mouse callback for heatmaps
-        set(fig, 'WindowButtonMotionFcn', @(src, evt) onMouseMoveSpec(src, evt, axList, sb));
-
-    %% 4B. Render 1D Multi-Curve Line Overlay (frequency.fig / amplitude.fig)
-    else
-        colorPalette = [
-            0.00, 0.82, 0.95;  % Electric Cyan
-            0.95, 0.35, 0.25;  % Coral Red
-            0.95, 0.80, 0.15;  % Gold Amber
-            0.20, 0.85, 0.40;  % Emerald Green
-            0.75, 0.40, 0.90;  % Bright Purple
-            1.00, 0.55, 0.00;  % Vivid Orange
-            0.40, 0.65, 1.00;  % Sky Blue
-            0.90, 0.40, 0.60;  % Rose Pink
+        % Dedicated Purple -> Yellow Heatmap Colormap (Plasma style)
+        purpleYellowMap = [
+            linspace(0.08, 0.55, 64)', linspace(0.02, 0.10, 64)', linspace(0.25, 0.65, 64)';
+            linspace(0.55, 0.92, 64)', linspace(0.10, 0.45, 64)', linspace(0.65, 0.15, 64)';
+            linspace(0.92, 0.98, 64)', linspace(0.45, 0.85, 64)', linspace(0.15, 0.10, 64)';
+            linspace(0.98, 0.99, 64)', linspace(0.85, 0.98, 64)', linspace(0.10, 0.55, 64)'
         ];
-        numColors = size(colorPalette, 1);
 
-        fig = figure('Name', sprintf('Acoustic Trace Comparison - %s', taskName), ...
-            'NumberTitle', 'off', ...
-            'Color', [0.11, 0.12, 0.14], ...
-            'Position', [150, 100, 1050, 650], ...
-            'Visible', 'off');
-
+        for k = 1:numSpecs
+            yPos = topM - k * subH - (k - 1) * gap;
+            ax = axes('Parent', fig, 'Position', [leftM, yPos, width, subH]);
+            axList(k) = ax;
+            imagesc(ax, extractedData(k).x, extractedData(k).y, extractedData(k).c);
+            axis(ax, 'xy');
+            colormap(ax, purpleYellowMap);
+            set(ax, 'Color', 'w', 'XColor', 'k', 'YColor', 'k', 'LineWidth', 1.0, 'Box', 'on');
+            title(ax, legendLabels{k}, 'Color', 'k', 'FontSize', 10, 'FontWeight', 'bold', 'Interpreter', 'none');
+            ylabel(ax, 'Freq (Hz)', 'Color', 'k', 'FontSize', 9.5);
+            if k == numSpecs
+                xlabel(ax, 'Time (s)', 'Color', 'k', 'FontSize', 9.5, 'FontWeight', 'bold');
+            else
+                set(ax, 'XTickLabel', []);
+            end
+            ylim(ax, [0, 2200]);
+            yline(ax, f_cutoff, '--', 'Color', [0.35, 0.35, 0.35], 'LineWidth', 1.0);
+        end
+        cb = colorbar(axList(end), 'Position', [0.91, bottomM, 0.02, totalH]);
+        cb.Color = 'k';
+        ylabel(cb, 'Sound Energy (dB)', 'Color', 'k', 'FontSize', 9.0, 'FontWeight', 'bold');
+        linkaxes(axList, 'xy');
+    else
+        % Standalone 1D Line Graph
         ax = axes('Parent', fig, 'Units', 'normalized', ...
             'Position', [0.08, 0.12, 0.88, 0.80], ...
-            'Color', [0.07, 0.08, 0.09], ...
-            'XColor', [0.65, 0.68, 0.74], 'YColor', [0.65, 0.68, 0.74], ...
-            'GridColor', [0.22, 0.24, 0.28], 'GridAlpha', 0.8);
-        grid(ax, 'on'); box(ax, 'on'); hold(ax, 'on');
+            'Color', 'w', 'XColor', 'k', 'YColor', 'k', ...
+            'LineWidth', 1.0, 'Box', 'on', ...
+            'GridColor', [0.85, 0.85, 0.85], 'GridAlpha', 0.8);
+        grid(ax, 'on'); hold(ax, 'on');
 
-        sb = uicontrol('Parent', fig, 'Style', 'text', ...
-            'String', ' [Coordinate Tracker] Hover cursor over traces to inspect coordinates', ...
-            'Units', 'normalized', ...
-            'Position', [0.08, 0.02, 0.88, 0.04], ...
-            'BackgroundColor', [0.15, 0.16, 0.19], ...
-            'ForegroundColor', [0.45, 0.85, 0.95], ...
-            'FontSize', 9, 'HorizontalAlignment', 'left', ...
-            'Tag', 'CoordinateStatusBar');
-
-        plotLines = [];
-        legendLabels = {};
-        isFreq = contains(lower(string(extractedData(1).xLabel)), 'freq') || ...
-                 contains(lower(string(extractedData(1).label)), 'freq');
-
-        for k = 1:length(extractedData)
-            cIdx = mod(k - 1, numColors) + 1;
-            c = colorPalette(cIdx, :);
+        plotLines = gobjects(1, numTraces);
+        for k = 1:numTraces
+            c = plotColors(k, :);
+            ls = plotLineStyles{k};
+            mk = plotMarkers{k};
 
             if isFreq && length(extractedData(k).x) <= 32
-                h = plot(ax, extractedData(k).x, extractedData(k).y, '-o', 'Color', c, ...
-                    'LineWidth', 1.5, 'MarkerSize', 5.5, 'MarkerFaceColor', c, ...
-                    'DisplayName', extractedData(k).label);
+                h = plot(ax, extractedData(k).x, extractedData(k).y, ...
+                    'LineStyle', ls, 'Color', c, 'LineWidth', 1.6, ...
+                    'Marker', mk, 'MarkerSize', 5.5, 'MarkerFaceColor', c, ...
+                    'MarkerEdgeColor', 'k', 'DisplayName', legendLabels{k});
             else
-                h = plot(ax, extractedData(k).x, extractedData(k).y, 'Color', c, 'LineWidth', 1.2, ...
-                    'DisplayName', extractedData(k).label);
+                h = plot(ax, extractedData(k).x, extractedData(k).y, ...
+                    'LineStyle', ls, 'Color', c, 'LineWidth', 1.2, ...
+                    'DisplayName', legendLabels{k});
             end
-
-            % Native datatips
-            try
-                if isFreq
-                    h.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Frequency', 'XData', '%.1f Hz');
-                    h.DataTipTemplate.DataTipRows(2) = dataTipTextRow('|Amplitude|', 'YData', '%.5f');
-                else
-                    h.DataTipTemplate.DataTipRows(1) = dataTipTextRow('Time', 'XData', '%.4f s');
-                    h.DataTipTemplate.DataTipRows(2) = dataTipTextRow('Amplitude', 'YData', '%.5f');
-                end
-                h.DataTipTemplate.DataTipRows(end+1) = dataTipTextRow('Condition', repmat({extractedData(k).label}, 1, length(extractedData(k).x)));
-            catch
-            end
-
-            plotLines(end+1) = h; %#ok<AGROW>
-            legendLabels{end+1} = extractedData(k).label; %#ok<AGROW>
+            plotLines(k) = h;
         end
 
-        xlabel(ax, extractedData(1).xLabel, 'Color', [0.85, 0.88, 0.92], 'FontSize', 10);
-        ylabel(ax, extractedData(1).yLabel, 'Color', [0.85, 0.88, 0.92], 'FontSize', 10);
-        title(ax, sprintf('Acoustic Trace Comparison: %s', taskName), ...
-            'Color', [0.95, 0.96, 0.98], 'FontSize', 11, 'FontWeight', 'bold', 'Interpreter', 'none');
+        xlabel(ax, extractedData(1).xLabel, 'Color', 'k', 'FontSize', 10.5, 'FontWeight', 'bold');
+        yLbl = extractedData(1).yLabel;
+        if strcmpi(domainFolder, 'amplitude') && ~contains(yLbl, '[FS]')
+            yLbl = 'Amplitude [FS]';
+        end
+        ylabel(ax, yLbl, 'Color', 'k', 'FontSize', 10.5, 'FontWeight', 'bold');
+        title(ax, sprintf('Raw %s Overlay: %s', upper(domainFolder), taskName), ...
+            'Color', 'k', 'FontSize', 11.5, 'FontWeight', 'bold', 'Interpreter', 'none');
 
         if isFreq
             f_cutoff = 0.586 * 346.0 / 0.10;
             xline(ax, f_cutoff, '--', sprintf('Cut-Off: %.0f Hz', f_cutoff), ...
-                'Color', [0.65, 0.68, 0.74], 'LineWidth', 1.1, 'LabelVerticalAlignment', 'top', ...
-                'LabelColor', [0.85, 0.88, 0.92]);
-            xlim(ax, [0, 2200]);
+                'Color', [0.35, 0.35, 0.35], 'LineWidth', 1.1, 'LabelVerticalAlignment', 'top', ...
+                'LabelColor', 'k');
+            xlim(ax, [min(extractedData(1).x) - 50, max(extractedData(1).x) + 50]);
+            xticks(ax, 300:100:1800);
         end
 
         lgd = legend(ax, plotLines, legendLabels, 'Location', 'northeast', ...
-            'TextColor', [0.92, 0.94, 0.96], 'Color', [0.15, 0.16, 0.19], ...
-            'EdgeColor', [0.28, 0.30, 0.35], 'Interpreter', 'none');
+            'TextColor', 'k', 'Color', 'w', 'EdgeColor', [0.75, 0.75, 0.75], 'Interpreter', 'none');
         set(lgd, 'FontSize', 9);
-
-        set(fig, 'WindowButtonMotionFcn', @(src, evt) onMouseMoveLine(src, evt, ax, sb, isFreq));
+        pan(fig, 'on');
     end
 
-    %% 5. Save Overlay Figure to analyze/overlay/
-    % Ensure figure is visible and has a CreateFcn hook so double-clicking the .fig always opens visibly
+    %% 6. Save Figure to analyze/overlay/{domain}/{taskName}.fig
     set(fig, 'Visible', 'on');
     set(fig, 'CreateFcn', 'set(gcbo, ''Visible'', ''on'')');
     savefig(fig, outFigPath);
-    fprintf('\n[SAVED] Overlaid figure successfully written to:\n  %s\n', outFigPath);
+    fprintf('\n[SAVED] Raw Overlay Figure written to:\n  %s\n', outFigPath);
 
     linkFig = sprintf('<a href="matlab:openfig(''%s'', ''visible'');">[Open Overlay.fig]</a>', strrep(outFigPath, '\', '/'));
     linkDir = sprintf('<a href="matlab:winopen(''%s'');">[Open Folder]</a>', strrep(targetDir, '\', '/'));
@@ -391,34 +419,5 @@ function outFigPath = overlay_figures(figPaths, taskName, showPlot)
 
     if ~showPlot
         close(fig);
-    end
-end
-
-%% Helper Callbacks for Live Coordinate Tracking
-function onMouseMoveLine(~, ~, ax, sb, isFreq)
-    cp = get(ax, 'CurrentPoint');
-    x = cp(1, 1); y = cp(1, 2);
-    xLim = xlim(ax); yLim = ylim(ax);
-
-    if x >= xLim(1) && x <= xLim(2) && y >= yLim(1) && y <= yLim(2)
-        if isFreq
-            set(sb, 'String', sprintf('  [OVERLAY TRACKER] Freq: %6.1f Hz | |Amplitude|: %.5f', x, y));
-        else
-            set(sb, 'String', sprintf('  [OVERLAY TRACKER] Time: %7.4f s | Amplitude: %+.5f', x, y));
-        end
-    end
-end
-
-function onMouseMoveSpec(~, ~, axList, sb)
-    for a = 1:length(axList)
-        ax = axList(a);
-        cp = get(ax, 'CurrentPoint');
-        x = cp(1, 1); y = cp(1, 2);
-        xLim = xlim(ax); yLim = ylim(ax);
-
-        if x >= xLim(1) && x <= xLim(2) && y >= yLim(1) && y <= yLim(2)
-            set(sb, 'String', sprintf('  [PANEL %d TRACKER] Time: %6.3f s | Frequency: %6.1f Hz', a, x, y));
-            return;
-        end
     end
 end

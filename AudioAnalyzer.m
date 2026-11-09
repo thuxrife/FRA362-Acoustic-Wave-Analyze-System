@@ -217,7 +217,7 @@ classdef AudioAnalyzer < handle
             catch
             end
             xlabel(xLabelText);
-            ylabel('Amplitude');
+            ylabel('Amplitude [FS]');
             
             header = obj.formatTitle(sprintf('Amplitude vs Time (%s)', xUnit));
             title(header, 'Interpreter', 'none');

@@ -71,6 +71,14 @@ function record_acoustic_sample()
         'Resize', 'on', ...
         'CloseRequestFcn', @onClose);
 
+    %% Top Menu: Physical Experiments
+    menuExp = uimenu(fig, 'Text', '&Experiments');
+    uimenu(menuExp, 'Text', '1. Time of Flight (ToF) [Raw Amplitude]', 'Callback', @(~,~) onRunPhysicalExp(1));
+    uimenu(menuExp, 'Text', '2. Porous vs Non-Porous [Raw Freq + Envelope Spectrogram]', 'Callback', @(~,~) onRunPhysicalExp(2));
+    uimenu(menuExp, 'Text', '3. Area Blockage [Envelope Amp + Raw Freq + Envelope Spec]', 'Callback', @(~,~) onRunPhysicalExp(3));
+    uimenu(menuExp, 'Text', 'Run ALL 3 Physical Experiments', 'Separator', 'on', 'Callback', @(~,~) onRunPhysicalExp('all'));
+    uimenu(menuExp, 'Text', 'Interactive Experiment Selector...', 'Callback', @(~,~) onRunPhysicalExp([]));
+
     % Color Theme Palette
     cPanelBg   = [0.15, 0.16, 0.19];
     cControlBg = [0.20, 0.22, 0.26];
@@ -214,30 +222,38 @@ function record_acoustic_sample()
         'ForegroundColor', cTextSec, ...
         'FontSize', 9, 'HorizontalAlignment', 'left');
 
-    % Figure Overlay, Subtraction, & Delta Comparison Tool Buttons
+    % Figure Overlay, Envelope, Blockage, & Experiments Tool Buttons
     btnOverlay = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
-        'String', 'Overlay', ...
-        'Position', [15, 64, 93, 36], ...
+        'String', 'Raw Overlay', ...
+        'Position', [15, 64, 70, 36], ...
         'BackgroundColor', [0.38, 0.25, 0.55], 'ForegroundColor', [1, 1, 1], ...
-        'FontSize', 9, 'FontWeight', 'bold', ...
-        'Tooltip', 'Overlay multiple spectral curves for visual comparison', ...
+        'FontSize', 8, 'FontWeight', 'bold', ...
+        'Tooltip', 'Raw trace overlay: saves to analyze/overlay/{amplitude|frequency|spectrogram}/', ...
         'Callback', @onOverlayClick);
 
-    btnDiff = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+    btnEnvelope = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+        'String', 'Envelope', ...
+        'Position', [89, 64, 70, 36], ...
+        'BackgroundColor', [0.10, 0.55, 0.60], 'ForegroundColor', [1, 1, 1], ...
+        'FontSize', 8, 'FontWeight', 'bold', ...
+        'Tooltip', 'Envelope trace overlay: saves to analyze/envelope/{amplitude|frequency|spectrogram}/', ...
+        'Callback', @onEnvelopeClick);
+
+    btnBlockage = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
         'String', 'Blockage', ...
-        'Position', [116, 64, 93, 36], ...
+        'Position', [163, 64, 70, 36], ...
         'BackgroundColor', [0.85, 0.28, 0.20], 'ForegroundColor', [1, 1, 1], ...
-        'FontSize', 9, 'FontWeight', 'bold', ...
-        'Tooltip', 'Acoustic Blockage Analysis (Level 4 & 5): Delta dB & Physical Blockage Area %', ...
+        'FontSize', 8, 'FontWeight', 'bold', ...
+        'Tooltip', 'Acoustic Blockage Analysis (Level 4 & 5): saves to analyze/blockage/', ...
         'Callback', @onBlockageClick);
 
-    btnDelta = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
-        'String', 'Reflex Map', ...
-        'Position', [217, 64, 93, 36], ...
-        'BackgroundColor', [0.10, 0.55, 0.60], 'ForegroundColor', [1, 1, 1], ...
-        'FontSize', 9, 'FontWeight', 'bold', ...
-        'Tooltip', 'Acoustic Reflex Map (Option C): 8s Timeline & Synchronized 16-Step Heatmaps', ...
-        'Callback', @onReflexClick);
+    btnExperiments = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
+        'String', 'Experiments', ...
+        'Position', [237, 64, 73, 36], ...
+        'BackgroundColor', [0.72, 0.45, 0.10], 'ForegroundColor', [1, 1, 1], ...
+        'FontSize', 8, 'FontWeight', 'bold', ...
+        'Tooltip', 'Run 3 Physical Experiments (ToF, Porous, Area Blockage)', ...
+        'Callback', @onExpSuiteClick);
 
     % 1-Click Pipeline Button
     btnPipeline = uicontrol('Parent', pnlCtrl, 'Style', 'pushbutton', ...
@@ -808,7 +824,7 @@ function record_acoustic_sample()
             if isempty(trialName), trialName = defaultTrial; end
             taskName = sprintf('compare_%s', trialName);
 
-            set(lblStatus, 'String', 'STATUS: SELECTING FIGURES...', 'BackgroundColor', [0.38, 0.25, 0.55]);
+            set(lblStatus, 'String', 'STATUS: SELECTING RAW OVERLAY...', 'BackgroundColor', [0.38, 0.25, 0.55]);
             drawnow;
 
             outPath = overlay_figures({}, taskName, true);
@@ -820,6 +836,27 @@ function record_acoustic_sample()
         catch ME
             errordlg(sprintf('Overlay tool error: %s', ME.message), 'Overlay Failed');
             set(lblStatus, 'String', 'STATUS: OVERLAY FAILED', 'BackgroundColor', cAccentRed);
+        end
+    end
+
+    function onEnvelopeClick(~, ~)
+        try
+            trialName = strtrim(get(txtTrial, 'String'));
+            if isempty(trialName), trialName = defaultTrial; end
+            taskName = sprintf('env_%s', trialName);
+
+            set(lblStatus, 'String', 'STATUS: SELECTING ENVELOPE...', 'BackgroundColor', [0.10, 0.55, 0.60]);
+            drawnow;
+
+            outPath = plot_envelope_overlay({}, '', taskName);
+            if ~isempty(outPath)
+                set(lblStatus, 'String', 'STATUS: ENVELOPE SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
+            else
+                set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
+            end
+        catch ME
+            errordlg(sprintf('Envelope error: %s', ME.message), 'Envelope Tool Failed');
+            set(lblStatus, 'String', 'STATUS: ENVELOPE FAILED', 'BackgroundColor', cAccentRed);
         end
     end
 
@@ -844,24 +881,20 @@ function record_acoustic_sample()
         end
     end
 
-    function onReflexClick(~, ~)
-        try
-            trialName = strtrim(get(txtTrial, 'String'));
-            if isempty(trialName), trialName = defaultTrial; end
-            taskName = sprintf('reflex_%s', trialName);
+    function onExpSuiteClick(~, ~)
+        onRunPhysicalExp([]);
+    end
 
-            set(lblStatus, 'String', 'STATUS: SELECTING REFLEX FILES...', 'BackgroundColor', [0.10, 0.55, 0.60]);
+    function onRunPhysicalExp(expChoice)
+        try
+            set(lblStatus, 'String', 'STATUS: GENERATING EXPERIMENTS...', 'BackgroundColor', [0.72, 0.45, 0.10]);
             drawnow;
 
-            outPath = plot_acoustic_reflex_map({}, taskName);
-            if ~isempty(outPath)
-                set(lblStatus, 'String', 'STATUS: REFLEX MAP SAVED', 'BackgroundColor', [0.12, 0.55, 0.28]);
-            else
-                set(lblStatus, 'String', 'STATUS: READY', 'BackgroundColor', [0.18, 0.20, 0.24]);
-            end
+            plot_physical_experiments(expChoice);
+            set(lblStatus, 'String', 'STATUS: EXPERIMENTS READY', 'BackgroundColor', [0.12, 0.55, 0.28]);
         catch ME
-            errordlg(sprintf('Reflex Map error: %s', ME.message), 'Reflex Tool Failed');
-            set(lblStatus, 'String', 'STATUS: REFLEX FAILED', 'BackgroundColor', cAccentRed);
+            errordlg(sprintf('Physical experiment error: %s', ME.message), 'Experiment Tool Failed');
+            set(lblStatus, 'String', 'STATUS: EXPERIMENT FAILED', 'BackgroundColor', cAccentRed);
         end
     end
 
