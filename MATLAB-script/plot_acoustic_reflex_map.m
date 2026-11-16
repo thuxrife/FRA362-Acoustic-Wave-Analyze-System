@@ -21,6 +21,14 @@ function [outFigPath, fig] = plot_acoustic_reflex_map(inputPaths, taskName)
 %   plot_acoustic_reflex_map(); % Interactive dialog
 %   plot_acoustic_reflex_map('base.csv, test1.csv, test2.csv', 'task_name');
 
+    % Ensure working directory is anchored to project root
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+        cd(repoRoot);
+        addpath(scriptDir);
+    end
+
     fs = 44100;
     outRoot = fullfile('analyze', 'envelope', 'spectrogram');
     if ~exist(outRoot, 'dir'), mkdir(outRoot); end

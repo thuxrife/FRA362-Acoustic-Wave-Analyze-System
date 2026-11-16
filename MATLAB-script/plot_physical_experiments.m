@@ -24,9 +24,10 @@ function plot_physical_experiments(expChoice)
 %   plot_physical_experiments(3)        % Run only Exp 3 (Area Blockage)
 %   plot_physical_experiments('all')    % Run all 3 experiments in batch
 
-    baseDir = fileparts(mfilename('fullpath'));
-    if ~isempty(baseDir), cd(baseDir); end
-    addpath(pwd);
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot), cd(repoRoot); end
+    addpath(scriptDir);
 
     baseCsv = fullfile('logged', '2026-11-08-baseline', 'sound_sample_baseline.csv');
     baseFreqFig = fullfile('analyze', '2026-11-08-baseline', 'sound_sample_baseline', 'frequency.fig');

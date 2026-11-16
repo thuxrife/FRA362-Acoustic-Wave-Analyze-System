@@ -15,6 +15,14 @@
 
 clear; clc;
 
+% Ensure working directory is anchored to project root
+scriptDir = fileparts(mfilename('fullpath'));
+repoRoot = fileparts(scriptDir);
+if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+    cd(repoRoot);
+    addpath(scriptDir);
+end
+
 fs = 44100;
 freqSteps = 300:100:1900;           % Steps below the 2028 Hz cut-off (100mm pipe)
 numSteps = length(freqSteps);

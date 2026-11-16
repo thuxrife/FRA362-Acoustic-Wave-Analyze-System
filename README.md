@@ -1,27 +1,106 @@
-# Acoustic Wave Analysis System
+# Acoustic Wave Inspection & Machine Learning System
 
-An Object-Oriented MATLAB system for laboratory pipe acoustic wave inspection, hardware data acquisition, signal alignment, per-frequency feature extraction, and multi-trial comparative visualization.
+A dual-engine platform for acoustic pipe inspection, integrating MATLAB hardware acquisition and digital signal processing with Python physics-guided machine learning for sediment material classification and blockage sizing.
 
-The workflow is streamlined into **two core scripts** (plus an interactive comparison tool):
-1. **[`record_acoustic_sample.m`](record_acoustic_sample.m) — Audio Interface & Hardware Monitor GUI**: Interactive studio dashboard for microphone/speaker selection, hot-plug device rescanning, $N$-repeat coherent ensemble averaging, live waveform & FFT peak monitoring, and VU level metering.
-2. **[`main.m`](main.m) — Master Batch Pipeline Runner**: Automates Stage 1 (sub-millisecond onset alignment to $t = 0.0\text{ s}$ with $-0.2\text{ s}$ baseline into `logged/*.csv`) and Stage 2 (per-frequency feature extraction into `features_by_frequency.csv` and interactive `.fig` plots into `analyze/`).
-3. **[`overlay_figures.m`](overlay_figures.m) — Multi-Figure Overlay & Comparison Engine**: Ingests comma-separated `.fig` paths to overlay 1D curves (`frequency.fig`, `amplitude.fig`) or compute 3-panel synchronized differential spectrograms ($\Delta\text{dB}$) into `analyze/overlay/`.
+| Engine | Primary Scope | Core Interfaces |
+| :--- | :--- | :--- |
+| **MATLAB** | Hardware recording, onset alignment, Hilbert envelope, STFT feature extraction, `.fig` visualization | `record_acoustic_sample`, `main`, `AudioAnalyzer` |
+| **Python** | Dual-domain feature extraction, sediment classification, calibrated blockage regression | `acoustic_blockage_ml_pipeline.ipynb` |
 
 ---
 
-## Prerequisites
+## Table of Contents
+- [Quick Start & Environment Setup](#quick-start--environment-setup)
+  - [Python Virtual Environment](#1-python-virtual-environment-setup)
+  - [MATLAB Search Path](#2-matlab-search-path-setup)
+- [MATLAB Workflow: Hardware Acquisition & Signal Processing](#matlab-workflow-hardware-acquisition--signal-processing)
+- [Python Workflow: Physics-Guided Machine Learning](#python-workflow-physics-guided-machine-learning)
+- [Directory Structure](#directory-structure)
+- [Data Schemas](#data-schemas)
+- [Acoustic Physics Reference](#acoustic-physics-reference)
+- [Programmatic MATLAB API](#programmatic-matlab-api)
 
-### 1. MATLAB Environment (Hardware Recording & Signal Extraction)
-- **MATLAB**: Version R2020b or later recommended (supports `audiodevreset` for live USB/Bluetooth hardware rescanning).
-- **Required Toolboxes**:
-  - `Signal Processing Toolbox` (used for `spectrogram`, `hilbert`, and `findpeaks`; fallback algorithms are built in).
+---
 
-### 2. Python & Machine Learning Environment (`.venv`)
-- **Python**: Version 3.10 or later recommended.
-- Automated 1-click virtual environment setup scripts are provided for both **Linux/Ubuntu** and **Windows**:
-  - **Linux / Ubuntu**: Run `./setup_env.sh`
-  - **Windows (Command Prompt)**: Run `setup_env.bat`
-  - **Windows (PowerShell)**: Run `.\setup_env.ps1`
+## Quick Start & Environment Setup
+
+### 1. Python Virtual Environment Setup
+Run the automated setup script for your platform to create `.venv`, install dependencies from [`requirements.txt`](requirements.txt), and register the Jupyter kernel:
+
+| Platform | Setup Command | Activation Command |
+| :--- | :--- | :--- |
+| **Windows (PowerShell)** | `.\setup_env.ps1` | `.\.venv\Scripts\Activate.ps1` |
+| **Windows (Command Prompt)** | `setup_env.bat` | `.venv\Scripts\activate.bat` |
+| **Linux / macOS** | `./setup_env.sh` | `source .venv/bin/activate` |
+
+Launch the machine learning pipeline:
+```bash
+jupyter notebook acoustic_blockage_ml_pipeline.ipynb
+```
+Select the **`Python 3 (.venv)`** kernel from the dropdown in Jupyter or VS Code.
+
+### 2. MATLAB Search Path Setup
+1. Launch MATLAB (version R2020b or later with `Signal Processing Toolbox`).
+2. Set your working directory to the project repository root (`FRA362-Acoustic-Wave-Analyze-System`).
+3. [`startup.m`](startup.m) runs automatically on launch, adding [`MATLAB-script/`](MATLAB-script/) to the MATLAB search path.
+4. Verify function resolution in the Command Window:
+   ```matlab
+   which record_acoustic_sample AudioAnalyzer main
+   ```
+
+---
+
+## MATLAB Workflow: Hardware Acquisition & Signal Processing
+
+All processing scripts reside in [`MATLAB-script/`](MATLAB-script/) and automatically anchor to the repository root.
+
+```mermaid
+flowchart LR
+    A["Transducers<br>(Speaker / Mic)"] --> B["record_acoustic_sample<br>(Audio GUI)"]
+    B -->|WAV Audio| C["mp3/ Trial Folder"]
+    C --> D["main.m<br>(Batch Pipeline)"]
+    D -->|Calibrated Time Series| E["logged/*.csv"]
+    D -->|Features & Figures| F["analyze/*"]
+    E & F --> G["overlay_figures<br>& plot_blockage_analysis"]
+```
+
+### Core Operations
+
+| Task | Interface / Command | Description |
+| :--- | :--- | :--- |
+| **Hardware Recording** | `record_acoustic_sample` | Studio GUI for mic/speaker selection, hot-plug hardware rescanning (`audiodevreset`), live oscilloscope, FFT spectrum ($0-2200\text{ Hz}$), and $N$-repeat coherent averaging. |
+| **Batch Processing** | `main`<br>`main('trial_name')` | Aligns Step 1 onset to $t = 0.000\text{ s}$ via 16-step comb cross-correlation, retains a $0.200\text{ s}$ pre-trigger baseline, and exports calibrated CSVs to `logged/` and interactive `.fig` plots to `analyze/`. |
+| **Multi-Curve Overlay** | `overlay_figures('path1.fig, path2.fig', 'task')` | Overlays 1D waveforms/spectra or generates 3-panel synchronized differential spectrograms ($\Delta\text{dB}$) in `analyze/overlay/`. |
+| **Blockage Sizing** | `plot_blockage_analysis()` | Interactive tool computing Level 4 Transmission Loss ($\Delta\text{dB}$) and Level 5 Physical Blockage Area ($\alpha\%$). |
+| **Physical Experiments** | `plot_physical_experiments(1)`<br>`plot_physical_experiments('all')` | Automated batch runner for Experiment 1 (Time-of-Flight), Experiment 2 (Porosity), and Experiment 3 (Blockage Area). |
+
+---
+
+## Python Workflow: Physics-Guided Machine Learning
+
+The machine learning pipeline consumes calibrated time series from `logged/` to perform **two-stage cascaded diagnostics**:
+1. **Material Classification**: Identifies sediment material composition (**Clay**, **Leaf**, or **Stone**) using acoustic impedance and frequency-dependent attenuation signatures.
+2. **Calibrated Blockage Regression**: Quantifies cross-sectional blockage area ($\hat{\alpha}\%$) using material-specific calibration laws.
+
+```mermaid
+flowchart LR
+    A["logged/*.csv<br>(5-Repeat Time Series)"] --> B["Dual-Domain Feature Extractor<br>(ToF Amplitude + STFT Spectra)"]
+    B --> C{"Stage 1: Material Classifier<br>(SVM / Random Forest)"}
+    C -->|Clay| D1["Clay Regressor<br>(Solid Reactance Model)"]
+    C -->|Leaf| D2["Leaf Regressor<br>(Viscous Absorption Model)"]
+    C -->|Stone| D3["Stone Regressor<br>(Void Transmission Model)"]
+    D1 & D2 & D3 --> E["True Blockage Area Sizing (alpha %)"]
+```
+
+### Feature Architecture & Diagnostic Performance
+- **Physics Features**:
+  - *Time-Domain Reflectometry*: Leading-edge echo amplitude $A_{\text{echo}}$ at transit delay $\tau_{\text{block}}$, reflection coefficient $R = A_{\text{echo}} / A_{\text{ref}}$, and analytic envelope decay rate.
+  - *Spectral Signatures*: High-to-low band energy ratio ($E_{\text{high}} / E_{\text{low}}$), spectral centroid shift, and discrete insertion loss across 16 steps ($300 - 1800\text{ Hz}$).
+- **Validation Protocol**: Group-K-Fold cross-validation grouped by physical sample identifier to guarantee zero data leakage between repeated recordings.
+- **Diagnostic Benchmarks**:
+  - **Material Classification**: $\ge 83.3\%$ cross-validation accuracy across Clay, Leaf, and Stone.
+  - **Area Regression**: Correlation $r = 0.964$ ($R^2 > 0.90$), reducing average area estimation error from $24.2\%$ down to **$7.1\%$**.
+- Full mathematical derivations and scaling laws are detailed in [`docs/markdown-file/MACHINE_LEARNING.md`](docs/markdown-file/MACHINE_LEARNING.md).
 
 ---
 
@@ -29,270 +108,100 @@ The workflow is streamlined into **two core scripts** (plus an interactive compa
 
 ```text
 FRA362-Acoustic-Wave-Analyze-System/
-├── sound_input/                                  <-- Pure speaker excitation tracks (selectable in GUI)
-│   ├── stepped_tones_100mm_2waves_500ms_gap.wav  <-- 2-wave impulse per freq (2/f_k) + 0.50s gap (8.04s)
-│   ├── stepped_tones_100mm_150ms_250ms.wav       <-- 16-step steady burst (150ms tone + 250ms gap, 6.40s)
-│   └── stepped_tones_100mm_2s_1s.wav             <-- Legacy 17-step track (300-1900 Hz, 51s)
+├── MATLAB-script/                                <-- Consolidated MATLAB scripts and analysis engines
+│   ├── AudioAnalyzer.m                           <-- Core Object-Oriented acoustic analysis engine
+│   ├── record_acoustic_sample.m                  <-- Hardware recorder and oscilloscope GUI
+│   ├── main.m                                    <-- Master batch pipeline (mp3 -> logged -> analyze)
+│   ├── overlay_figures.m                         <-- Multi-trace comparative overlay engine
+│   ├── plot_envelope_overlay.m                   <-- Analytic envelope comparative visualizer
+│   ├── plot_acoustic_reflex_map.m                <-- Time-of-Flight spectrogram heatmap engine
+│   ├── plot_blockage_analysis.m                  <-- Quantitative blockage assessment engine
+│   ├── plot_physical_experiments.m               <-- Physical experiment suite batch runner
+│   ├── log_raw_data.m / extract_features.m       <-- Standalone Stage 1 and Stage 2 modules
+│   └── generate_sound_input.m                    <-- Excitation audio generator
 │
-├── mp3/                                          <-- Raw recorded audio from experiments
-│   └── {trial_name}/
-│       ├── {sample_name}.wav                     <-- Master / ensemble-averaged recording
-│       ├── {sample_name}_rep1.wav                <-- Individual raw repeat 1 (when Repeats > 1)
-│       ├── {sample_name}_rep2.wav                <-- Individual raw repeat 2 (when Repeats > 1)
-│       └── {sample_name}_stimulus.txt            <-- Active stimulus track reference
+├── startup.m                                     <-- Auto-initializes search path to MATLAB-script/
+├── acoustic_blockage_ml_pipeline.ipynb           <-- Interactive Jupyter machine learning pipeline
+├── requirements.txt                              <-- Python package dependencies
+├── setup_env.ps1 / .bat / .sh                    <-- Automated virtual environment setup scripts
+├── CONTEXT.md / README.md                        <-- System specifications and primary documentation
 │
-├── logged/                                       <-- Stage 1: Time-aligned & step-tagged CSVs
-│   └── {trial_name}/
-│       └── {sample_name}.csv                     <-- Time_s, Step_ID, Freq_Input, Amp_1..N, Amp_Avg, Amp_SD
+├── docs/                                         <-- Technical documentation and reference assets
+│   ├── markdown-file/                            <-- Extended markdown guides & physics derivations
+│   │   ├── MACHINE_LEARNING.md                   <-- Machine learning architectural plan and formulations
+│   │   └── ACOUSTIC_DERIVATION_PIPELINE.md       <-- Detailed acoustic wave derivation pipeline
+│   ├── example_plots/                            <-- Example figure assets
+│   ├── presentation-slide/                       <-- Presentation slides and causal diagrams
+│   └── ref-paper/                                <-- Reference academic literature
 │
-├── analyze/                                      <-- Stage 2: Extracted features & interactive .fig plots
-│   ├── {trial_name}/
-│   │   └── {sample_name}/
-│   │       ├── features_by_frequency.csv         <-- 7 acoustic metrics across 16 frequency steps
-│   │       ├── amplitude.fig                     <-- Interactive waveform & envelope with coordinate bar
-│   │       ├── frequency.fig                     <-- Single-sided FFT spectrum with cut-off guide
-│   │       └── spectrogram.fig                   <-- Time-frequency power distribution (dBFS)
-│   │
-│   ├── overlay/{domain}/                         <-- Raw multi-curve comparison overlays (amplitude, frequency, spectrogram)
-│   ├── envelope/{domain}/                        <-- Envelope analytic curve comparisons (amplitude, frequency, spectrogram)
-│   └── blockage/{task_name}/                     <-- Quantitative blockage assessment models (Delta dB, Area %)
-│
-├── acoustic_blockage_ml_pipeline.ipynb           <-- Interactive Jupyter ML diagnostic pipeline (Material ID & Area Sizing)
-├── MACHINE_LEARNING.md                           <-- Full ML architectural plan, physics derivations & benchmarks
-├── requirements.txt                              <-- Python package dependencies for ML environment
-├── setup_env.sh                                  <-- 1-Click virtual environment (.venv) setup for Linux/Ubuntu
-├── setup_env.bat                                 <-- 1-Click virtual environment (.venv) setup for Windows (CMD)
-├── setup_env.ps1                                 <-- 1-Click virtual environment (.venv) setup for Windows (PowerShell)
-├── AudioAnalyzer.m                               <-- Core Object-Oriented acoustic analysis engine
-├── record_acoustic_sample.m                      <-- Script 1: Audio Interface & Recorder GUI
-├── main.m                                        <-- Script 2: Master Batch Pipeline (mp3 -> logged -> analyze)
-├── overlay_figures.m                             <-- Tool 1: Raw trace overlay comparison
-├── plot_envelope_overlay.m                       <-- Tool 2: Envelope trace overlay comparison
-├── plot_acoustic_reflex_map.m                    <-- Spectrogram / Time-of-Flight Heatmap engine
-├── plot_blockage_analysis.m                      <-- Tool 3: Quantitative acoustic blockage assessment
-├── log_raw_data.m                                <-- Standalone Stage 1 module (mp3 -> logged)
-├── extract_features.m                            <-- Standalone Stage 2 module (logged -> analyze)
-├── generate_sound_input.m                        <-- Pure speaker excitation audio generator
-├── generate_dummy_data.m                         <-- Synthetic pipe acoustic benchmark generator
-└── README.md
+├── sound_input/                                  <-- Pure excitation tracks (2-wave impulse & steady bursts)
+├── mp3/                                          <-- Recorded experimental audio files ({trial}/{sample}.wav)
+├── logged/                                       <-- Stage 1: Aligned time-series CSVs (Amp_1..N, Amp_Avg)
+└── analyze/                                      <-- Stage 2: Extracted feature CSVs and interactive .fig plots
 ```
 
 ---
 
-## How to Use (Step-by-Step Guide)
+## Data Schemas
 
-### Step 1: Record Acoustic Samples via the GUI (`record_acoustic_sample.m`)
-
-Launch the Audio Interface GUI from the **MATLAB Command Window**:
-
-```matlab
-record_acoustic_sample
-```
-
-1. **Select Hardware Devices**:
-   - Choose your microphone (e.g., `Microphone (USB Audio CODEC)`) from the **Microphone Input** dropdown.
-   - Choose your speaker/amplifier (e.g., `Speakers (Wuzhi Audio)`) from the **Speaker Output** dropdown.
-   - *Hot-Plug Support*: If you plug in a USB mic or connect Bluetooth while the GUI is open, click **"Rescan Audio Devices (Refresh)"** to flush MATLAB's audio driver cache (`audiodevreset`) and populate the new hardware immediately.
-2. **Choose Operational Mode**:
-   - **Mode 1: Automated Test (Play + Record)** *(Recommended)* — Synchronously plays the 16-step tone burst (`300 Hz` to `1800 Hz`, `150 ms` tone + `250 ms` gap) through the speaker while recording the pipe response.
-   - **Mode 2: Record Only** — Records microphone input for 7.0 seconds using an external sound source.
-   - **Mode 3: Sound Check (Speaker Play Only)** — Plays the excitation track without recording to verify speaker volume.
-3. **Configure Trial, Sample Name, Repeats & Stimulus Input**:
-   - **Trial Folder**: Group name inside `mp3/` (defaults to `YYYY-MM-DD-sound-sample`).
-   - **Sample Name**: Condition identifier (e.g., `sound_sample_01_sand-1-piece-front`). Re-recording with the same name automatically overwrites/replaces the previous file.
-   - **Repeats ($N$)**: Set $N = 1$ for a single capture, or $N > 1$ (e.g., `3` or `5`) to run $N$ consecutive repeats automatically.
-   - **Stimulus Input Dropdown & Browse**: Select any excitation track from `sound_input/` (such as `stepped_tones_100mm_2waves_500ms_gap.wav` or `stepped_tones_100mm_150ms_250ms.wav`) or click **`Browse...`** to pick any custom `.wav`/`.mp3` file at any time.
-4. **Inspect the Live Monitor**:
-   - **Top Graph (Oscilloscope)**: Displays raw time-domain waveform $s(t)$.
-   - **Bottom Graph (Frequency Spectrum)**: Displays single-sided linear FFT `|Amplitude|` ($0 - 2200\text{ Hz}$) with golden peak markers on the 16 excitation frequencies and the plane-wave cut-off guide ($2028\text{ Hz}$).
-   - **Right Meter (VU & Clipping)**: Shows peak level in dBFS. If $|y| \ge 0.95$, the red **CLIP** LED lights up to warn you to lower microphone gain.
-   - **Play Recorded Audio**: Plays back the captured wave (with automatic audible gain normalization for quiet signals).
-
----
-
-### Step 2: Run the Master Analysis Pipeline (`main.m`)
-
-You can trigger the full analysis pipeline in **two ways**:
-
-- **Option A (From the GUI)**: Click the blue **"RUN MASTER PIPELINE (main.m)"** button at the bottom-left of the GUI. This processes the active trial folder immediately.
-- **Option B (From the Command Window)**:
-  ```matlab
-  main                                      % Process all trial folders in mp3/
-  main('2026-11-06-sound-sample-test')      % Process a specific trial folder only
-  ```
-
-#### What `main.m` Does Automatically:
-1. **Stage 1 — Time-Alignment & Raw CSV Logging (`mp3/` $\to$ `logged/`)**:
-   - Detects the first excitation burst onset via the Hilbert envelope and anchors the first peak at $t = 0.000\text{ s}$.
-   - Retains $0.200\text{ s}$ of quiet pre-trigger baseline ($t$ starts at $-0.200\text{ s}$).
-   - Segments the 16 active frequency steps and writes calibrated time-series data to `logged/{trial}/{sample}.csv`.
-2. **Stage 2 — Per-Frequency Feature Extraction & Interactive Plotting (`logged/` $\to$ `analyze/`)**:
-   - Computes 7 acoustic metrics per frequency step and exports `analyze/{trial}/{sample}/features_by_frequency.csv`.
-   - Exports 3 interactive MATLAB `.fig` files (`amplitude.fig`, `frequency.fig`, `spectrogram.fig`) equipped with a live hover coordinate tracking bar and sample data tips.
-   - Prints **1-Click Hyperlinks** in the MATLAB Command Window (`[Features CSV]`, `[Amplitude.fig]`, `[Frequency.fig]`, `[Spectrogram.fig]`, `[Folder]`) to open results with a single click.
-
----
-
-### Step 3: Compare & Overlay Experiments (`overlay_figures.m`)
-
-To compare multiple pipe conditions (e.g., Clean vs. Sand Blockage at Front vs. Middle):
-
-#### Method A: From the GUI
-1. Click the purple **"OVERLAY COMPARISON TOOL"** button in the GUI.
-2. In the pop-up dialog, paste your relative `.fig` file paths separated by a comma `,`:
-   ```text
-   analyze/2026-11-06-sound-sample-test/sound_sample_01_sand-1-piece-front/frequency.fig, analyze/2026-11-06-sound-sample-test/sound_sample_01_sand-1-piece/frequency.fig
-   ```
-3. Enter a comparison name (e.g., `front_vs_middle_freq`) and click **OK**.
-
-#### Method B: From the Command Window
-Pass a comma-separated string of `.fig` paths directly:
-```matlab
-% Compare 1D Frequency Spectra (overlays multi-colored curves on one plot)
-overlay_figures('analyze/trial/sampleA/frequency.fig, analyze/trial/sampleB/frequency.fig', 'freq_compare');
-
-% Compare 2D Spectrograms (creates 3-panel synchronized view + Differential dB map)
-overlay_figures('analyze/trial/sampleA/spectrogram.fig, analyze/trial/sampleB/spectrogram.fig', 'spec_diff');
-```
-
-#### Automatic Plot Mode Detection:
-- **For `frequency.fig` or `amplitude.fig` (1D Line Traces)**: Overlays all curves onto a single high-contrast dark axes with distinct studio colors, an automatic legend, and interactive hover tracking.
-- **For `spectrogram.fig` (2D Heatmaps)**: Generates a synchronized multi-panel comparison figure containing Condition 1, Condition 2, and the **Differential Spectrogram ($\Delta\text{dB} = \text{dB}_1 - \text{dB}_2$)** with linked time-frequency zoom (`linkaxes`).
-- All outputs are saved to `analyze/overlay/{taskName}/{taskName}.fig`.
-
----
-
-### Step 4: Run the Machine Learning Pipeline (`acoustic_blockage_ml_pipeline.ipynb`)
-
-For data-driven material identification (Clay vs. Stone vs. Leaf) and calibrated blockage area sizing ($\alpha\%$):
-
-#### 1. Setup Virtual Environment (`.venv`):
-Automated 1-click scripts are provided for both operating systems:
-
-* **Linux / Ubuntu**:
-  ```bash
-  ./setup_env.sh
-  source .venv/bin/activate
-  ```
-* **Windows (Command Prompt / `cmd`)**:
-  ```cmd
-  setup_env.bat
-  .venv\Scripts\activate.bat
-  ```
-* **Windows (PowerShell)**:
-  ```powershell
-  .\setup_env.ps1
-  .\.venv\Scripts\Activate.ps1
-  ```
-
-#### 2. Launch the Jupyter ML Notebook:
-```bash
-jupyter notebook acoustic_blockage_ml_pipeline.ipynb
-```
-Select the **`Python 3 (.venv)`** kernel from the dropdown in Jupyter / VS Code.
-
-#### What the ML Pipeline Computes Automatically:
-1. **Material Classification (SVM / k-NN)**: Separates Clay (solid reactance), Stone (void transmission), and Leaf (viscous absorption) with **$83.3\%$ cross-validation accuracy**.
-2. **Blockage Area Regression**: Predicts true physical area $\alpha\%$ using calibrated linear regression:
-   $$\hat{\alpha}(\%) = 124.50 \cdot A_{\text{echo}} + 1.32\%$$
-   Achieving **$r = 0.964$** and reducing error from $24.2\%$ down to **$\mathbf{7.1\%}$** on Clay.
-3. For the complete mathematical derivation and scaling laws, see [`MACHINE_LEARNING.md`](MACHINE_LEARNING.md).
-
----
-
-## Exported CSV Data Schemas
-
-### 1. Calibrated Time-Series Log (`logged/{trial}/{sample}.csv`)
-Uses a unified column structure for both single ($N=1$) and multi-repeat ($N>1$) experiments (with `Envelope` removed):
-- **Single Experiment ($N=1$)**: `Time_s, Step_ID, Freq_Input, Amp_1, Amp_Avg, Amp_SD`
-- **Repeats Experiment ($N>1$)**: `Time_s, Step_ID, Freq_Input, Amp_1, Amp_2, ..., Amp_N, Amp_Avg, Amp_SD`
-
-| Column | Name | Description |
+### 1. Calibrated Time Series (`logged/{trial}/{sample}.csv`)
+| Column | Identifier | Description |
 | :--- | :--- | :--- |
-| **1** | `Time_s` | Calibrated time in seconds (starts at $-0.200\text{ s}$, Step 1 @ $300\text{ Hz}$ anchored at $0.000\text{ s}$ via 16-step comb correlation) |
-| **2** | `Step_ID` | Integer frequency step index (`0` = silence gap/baseline, `1..16` = active frequency step) |
-| **3** | `Freq_Input` | Scheduled input excitation frequency in Hz (`300` to `1800 Hz` during steps, `0` during gaps) |
-| **4..3+N** | `Amp_1 .. Amp_N` | Aligned mono acoustic waveform $s_r(t)$ for each repeat $r = 1 \dots N$ |
-| **4+N** | `Amp_Avg` | Ensemble mean waveform across repeats: $\bar{s}(t) = \frac{1}{N}\sum_{r=1}^N s_r(t)$ |
-| **5+N** | `Amp_SD` | Sample standard deviation across repeats at each timestamp ($0$ when $N=1$) |
+| **1** | `Time_s` | Aligned timeline in seconds (Step 1 onset anchored at $0.000\text{ s}$; starts at $-0.200\text{ s}$). |
+| **2** | `Step_ID` | Frequency step index ($0$ = baseline/silence gap, $1 \dots 16$ = active excitation tone). |
+| **3** | `Freq_Input` | Excitation frequency in Hz ($300 - 1800\text{ Hz}$). |
+| **4..3+N** | `Amp_1..N` | Calibrated discrete sound pressure amplitudes across $N$ experimental repeats. |
+| **4+N** | `Amp_Avg` | Coherent ensemble average: $\bar{s}(t) = \frac{1}{N}\sum_{r=1}^N s_r(t)$. |
+| **5+N** | `Amp_SD` | Sample standard deviation across repeats (quantifies ambient acoustic noise). |
 
-### 2. Per-Frequency Feature Table (`analyze/{trial}/{sample}/features_by_frequency.csv`)
-| Column | Name | Description |
+### 2. Feature Table Summary (`analyze/{trial}/{sample}/features_by_frequency.csv`)
+| Metric | Description | Formula / Scope |
 | :--- | :--- | :--- |
-| **1** | `Step_ID` | Frequency step index (`1` to `16`) |
-| **2** | `Freq_Hz` | Detected excitation frequency in Hz (`300` to `1800 Hz`) |
-| **3** | `Onset_Time_s` | Aligned start time of the tone burst in seconds |
-| **4** | `Duration_s` | Active duration of the tone step in seconds |
-| **5** | `Step_RMS` | Root-Mean-Square amplitude across the active tone step |
-| **6** | `Step_Peak_Amp` | Maximum raw discrete sound pressure amplitude $\max(\|s(t)\|)$ within the tone step |
-| **7** | `Energy_dB` | Acoustic energy level in decibels ($20 \log_{10}(\text{Step\_RMS})$) |
+| `Step_ID`, `Freq_Hz` | Active step index and dominant excitation frequency | Steps $1 \dots 16$ ($300 - 1800\text{ Hz}$) |
+| `Onset_Time_s`, `Duration_s` | Tone burst onset timing and active duration | Derived from Hilbert envelope segmentation |
+| `Step_RMS`, `Step_Peak_Amp` | Steady-state RMS amplitude and peak discrete sound pressure | $\text{RMS} = \sqrt{\frac{1}{M}\sum s(t)^2}$, $\max(\|s(t)\|)$ |
+| `Energy_dB` | Acoustic energy level relative to digital full scale | $20 \log_{10}(\text{Step\_RMS})$ |
 
 ---
 
-## Output Visualizations (`.fig` Standard)
+## Acoustic Physics Reference
 
-By default, the system exports interactive MATLAB `.fig` files (`SaveFig = true`, `SaveImage = false`) so you can scroll-zoom, pan, and inspect exact sample points in MATLAB.
+### 1. Duct Plane-Wave Cut-Off Frequency ($f_c$)
+Sound propagates exclusively as a 1D plane wave ($\text{Mode } 0,0$) without diagonal wall reflections below:
+$$f_c \approx 0.586 \cdot \frac{c}{D}$$
+For pipe diameter $D = 0.10\text{ m}$ ($100\text{ mm}$) and sound speed $c = 346\text{ m/s}$, $f_c \approx 2028\text{ Hz}$. All 16 excitation steps ($300 - 1800\text{ Hz}$) operate strictly below $f_c$.
 
-### 1. Amplitude vs Time (`amplitude.fig`)
-Displays the aligned waveform $s(t)$, instantaneous Hilbert envelope $E(t)$, and shaded step boundaries. Moving the cursor updates the bottom coordinate bar with exact `Time (s)`, `Amplitude`, and `Sample #`.
+### 2. Boundary Reflection and Area Contraction
+At an area contraction from duct area $S_0$ to open area $S_1$ (blockage area ratio $\alpha = 1 - S_1 / S_0$):
+$$R = \frac{p_r}{p_i} = \frac{S_0 - S_1}{S_0 + S_1} = \frac{\alpha}{2 - \alpha} \iff \alpha = \frac{2R}{1+R}$$
+- **Non-Porous Sediment (Clay)**: Solid boundary causing strong in-phase acoustic reflection with low high-frequency transmission.
+- **Fibrous Material (Leaf)**: Frequency-dependent viscous absorption attenuating high frequencies inside the porous matrix.
+- **Granular Sediment (Stone)**: Sound transmits through interstitial air voids with 3D phase scattering.
 
-![Amplitude vs Time](docs/example_plots/amplitude.svg)
+### 3. Coherent Noise Reduction
+Averaging across $N$ repeats improves Signal-to-Noise Ratio (SNR) by $\Delta\text{SNR} = 10 \log_{10}(N)\text{ dB}$.
 
-### 2. Frequency Spectrum (`frequency.fig`)
-Displays the single-sided FFT amplitude spectrum ($P_1$) up to $2200\text{ Hz}$ with the plane-wave cut-off boundary marked at $f_c \approx 2028\text{ Hz}$.
-
-![Frequency Spectrum](docs/example_plots/frequency.svg)
-
-### 3. Spectrogram (`spectrogram.fig`)
-Displays the short-time Fourier transform (STFT) power spectral density in dB across time and frequency, resolving the 16 discrete tone steps and reverberation tails.
-
-![Spectrogram](docs/example_plots/spectrogram.svg)
-
----
-
-## Mathematical & Physical Formulations
-
-### 1. Acoustic Waveguide Cut-Off Frequency ($f_c$)
-Ensures sound propagates purely as a 1D **plane wave ($\text{Mode } 0,0$)** without higher-order cross-sectional wall reflections:
-$$f_c \approx 0.586 \cdot \frac{v}{D}$$
-For a laboratory pipe with diameter $D = 0.10\text{ m}$ ($100\text{ mm}$) and speed of sound $v = 346\text{ m/s}$:
-$$f_c \approx 0.586 \times \frac{346}{0.10} \approx 2028\text{ Hz}$$
-All 16 excitation steps ($300\text{ Hz}$ to $1800\text{ Hz}$) are kept strictly below $2028\text{ Hz}$.
-
-### 2. Coherent Ensemble Averaging Across $N$ Repeats
-For $N$ repeated recordings triggered identically, coherent time-domain averaging computes:
-$$\bar{s}(t) = \frac{1}{N} \sum_{k=1}^N s_k(t)$$
-Deterministic pipe acoustic responses add constructively while uncorrelated ambient room noise decays by $\sqrt{N}$, improving Signal-to-Noise Ratio by:
-$$\Delta \text{SNR} = 10 \log_{10}(N) \text{ dB}$$
-
-### 3. Instantaneous Hilbert Envelope ($E(t)$)
-Extracts the phase-independent energy envelope of the oscillating pressure wave:
-$$E(t) = \left| s(t) + j \cdot \mathcal{H}\{s(t)\} \right|$$
-
-### 4. Differential Spectrogram Attenuation ($\Delta\text{dB}$)
-When comparing two spectrograms $S_A(t, f)$ and $S_B(t, f)$ in [`overlay_figures.m`](overlay_figures.m), the differential power map highlights localized acoustic absorption or resonance shifts caused by blockages:
-$$\Delta\text{dB}(t, f) = 10 \log_{10}|S_A(t, f)| - 10 \log_{10}|S_B(t, f)|$$
+For comprehensive derivations, see [`docs/markdown-file/MACHINE_LEARNING.md`](docs/markdown-file/MACHINE_LEARNING.md) and [`docs/markdown-file/ACOUSTIC_DERIVATION_PIPELINE.md`](docs/markdown-file/ACOUSTIC_DERIVATION_PIPELINE.md).
 
 ---
 
-## Programmatic OOP Usage (`AudioAnalyzer.m`)
+## Programmatic MATLAB API
 
-[`AudioAnalyzer.m`](AudioAnalyzer.m) can also be called directly inside custom scripts:
+The core analysis class [`AudioAnalyzer.m`](MATLAB-script/AudioAnalyzer.m) supports direct scripting:
 
 ```matlab
-% Initialize engine with custom parameters
+% 1. Instantiate analyzer with parameters
 analyzer = AudioAnalyzer('', ...
     'AutoAlign', true, ...
     'PreTriggerSeconds', 0.2, ...
     'MaxFrequency', 2200, ...
-    'SaveFig', true, ...
-    'SaveImage', false);
+    'SaveFig', true);
 
-% Stage 1: Load raw audio and export aligned CSV
+% 2. Stage 1: Ingest raw audio and export calibrated CSV
 analyzer.loadFile('mp3/my_trial/sample_01.wav');
 analyzer.exportRawCSV('logged/my_trial/sample_01.csv');
 
-% Stage 2: Load logged CSV, extract per-frequency features, and export .fig plots
+% 3. Stage 2: Ingest CSV, extract features, and export figures
 T_raw = analyzer.loadFromCSV('logged/my_trial/sample_01.csv');
 featTable = analyzer.extractStepFeatures('analyze/my_trial/sample_01/features_by_frequency.csv', T_raw);
 analyzer.analyzeAndExport('analyze/my_trial/sample_01');

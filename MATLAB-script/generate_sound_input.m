@@ -12,6 +12,14 @@
 
 clear; clc;
 
+% Ensure working directory is anchored to project root
+scriptDir = fileparts(mfilename('fullpath'));
+repoRoot = fileparts(scriptDir);
+if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+    cd(repoRoot);
+    addpath(scriptDir);
+end
+
 fs = 44100;               % Standard 44.1 kHz sampling rate
 freqSteps = 300:100:1800; % 16 steps below 100mm pipe cut-off (~2028 Hz)
 numSteps = length(freqSteps);

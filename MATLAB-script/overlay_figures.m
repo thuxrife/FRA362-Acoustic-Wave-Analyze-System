@@ -14,6 +14,14 @@ function [outFigPath, fig] = overlay_figures(figPaths, taskName, showPlot)
 %   overlay_figures('analyze/.../frequency.fig, analyze/.../frequency.fig', 'freq_compare');
 %   overlay_figures(); % Opens interactive GUI prompt
 
+    % Ensure working directory is anchored to project root
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+        cd(repoRoot);
+        addpath(scriptDir);
+    end
+
     OUTPUT_ROOT = fullfile('analyze', 'overlay');
 
     %% 1. Interactive Input Dialog if Arguments Omitted

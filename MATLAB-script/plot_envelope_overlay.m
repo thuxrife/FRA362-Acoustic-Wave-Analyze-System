@@ -14,6 +14,14 @@ function [outFigPath, fig] = plot_envelope_overlay(inputPaths, domain, taskName)
 %   plot_envelope_overlay('base.csv, test1.csv, test2.csv', 'amplitude', 'clay_env');
 %   plot_envelope_overlay(); % Opens interactive GUI prompt
 
+    % Ensure working directory is anchored to project root
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+        cd(repoRoot);
+        addpath(scriptDir);
+    end
+
     OUTPUT_ROOT = fullfile('analyze', 'envelope');
 
     %% 1. Interactive Input Dialog if Arguments Omitted

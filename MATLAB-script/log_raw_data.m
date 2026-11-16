@@ -14,6 +14,14 @@
 
 clear; clc;
 
+% Ensure working directory is anchored to project root
+scriptDir = fileparts(mfilename('fullpath'));
+repoRoot = fileparts(scriptDir);
+if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+    cd(repoRoot);
+    addpath(scriptDir);
+end
+
 %% Configuration
 INPUT_ROOT        = 'mp3';
 LOGGED_ROOT       = 'logged';

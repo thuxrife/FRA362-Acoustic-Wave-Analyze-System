@@ -6,6 +6,14 @@ function record_acoustic_sample()
 % Usage:
 %   record_acoustic_sample        % Launches the interactive GUI
 
+    % Ensure working directory is anchored to project root
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+        cd(repoRoot);
+        addpath(scriptDir);
+    end
+
     %% 1. Default Configuration & Audio Discovery
     FS               = 44100;
     BITS             = 16;

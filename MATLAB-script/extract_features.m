@@ -14,6 +14,14 @@
 
 clear; clc;
 
+% Ensure working directory is anchored to project root
+scriptDir = fileparts(mfilename('fullpath'));
+repoRoot = fileparts(scriptDir);
+if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+    cd(repoRoot);
+    addpath(scriptDir);
+end
+
 %% 1. Input Array of Logged CSV Files (Relative Paths)
 % Specify target CSV files from /logged, or leave empty {} to process all CSVs in /logged
 CSV_FILES = {

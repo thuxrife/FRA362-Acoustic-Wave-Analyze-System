@@ -19,6 +19,14 @@ function [outFigPath, fig] = plot_blockage_analysis(inputPaths, taskName)
 %   plot_blockage_analysis(); % Interactive dialog
 %   plot_blockage_analysis('base.csv, test1.csv, test2.csv', 'clay_blockage');
 
+    % Ensure working directory is anchored to project root
+    scriptDir = fileparts(mfilename('fullpath'));
+    repoRoot = fileparts(scriptDir);
+    if ~isempty(repoRoot) && exist(fullfile(repoRoot, 'MATLAB-script'), 'dir')
+        cd(repoRoot);
+        addpath(scriptDir);
+    end
+
     fs = 44100;
     outRoot = fullfile('analyze', 'blockage');
     if ~exist(outRoot, 'dir'), mkdir(outRoot); end
