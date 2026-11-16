@@ -1,2 +1,7 @@
 CONTEXT.md
 wst.2011.183 (3).pdf
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+

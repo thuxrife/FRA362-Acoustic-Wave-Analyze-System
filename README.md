@@ -11,9 +11,17 @@ The workflow is streamlined into **two core scripts** (plus an interactive compa
 
 ## Prerequisites
 
+### 1. MATLAB Environment (Hardware Recording & Signal Extraction)
 - **MATLAB**: Version R2020b or later recommended (supports `audiodevreset` for live USB/Bluetooth hardware rescanning).
 - **Required Toolboxes**:
   - `Signal Processing Toolbox` (used for `spectrogram`, `hilbert`, and `findpeaks`; fallback algorithms are built in).
+
+### 2. Python & Machine Learning Environment (`.venv`)
+- **Python**: Version 3.10 or later recommended.
+- Automated 1-click virtual environment setup scripts are provided for both **Linux/Ubuntu** and **Windows**:
+  - **Linux / Ubuntu**: Run `./setup_env.sh`
+  - **Windows (Command Prompt)**: Run `setup_env.bat`
+  - **Windows (PowerShell)**: Run `.\setup_env.ps1`
 
 ---
 
@@ -49,6 +57,12 @@ FRA362-Acoustic-Wave-Analyze-System/
 │   ├── envelope/{domain}/                        <-- Envelope analytic curve comparisons (amplitude, frequency, spectrogram)
 │   └── blockage/{task_name}/                     <-- Quantitative blockage assessment models (Delta dB, Area %)
 │
+├── acoustic_blockage_ml_pipeline.ipynb           <-- Interactive Jupyter ML diagnostic pipeline (Material ID & Area Sizing)
+├── MACHINE_LEARNING.md                           <-- Full ML architectural plan, physics derivations & benchmarks
+├── requirements.txt                              <-- Python package dependencies for ML environment
+├── setup_env.sh                                  <-- 1-Click virtual environment (.venv) setup for Linux/Ubuntu
+├── setup_env.bat                                 <-- 1-Click virtual environment (.venv) setup for Windows (CMD)
+├── setup_env.ps1                                 <-- 1-Click virtual environment (.venv) setup for Windows (PowerShell)
 ├── AudioAnalyzer.m                               <-- Core Object-Oriented acoustic analysis engine
 ├── record_acoustic_sample.m                      <-- Script 1: Audio Interface & Recorder GUI
 ├── main.m                                        <-- Script 2: Master Batch Pipeline (mp3 -> logged -> analyze)
@@ -145,6 +159,44 @@ overlay_figures('analyze/trial/sampleA/spectrogram.fig, analyze/trial/sampleB/sp
 - **For `frequency.fig` or `amplitude.fig` (1D Line Traces)**: Overlays all curves onto a single high-contrast dark axes with distinct studio colors, an automatic legend, and interactive hover tracking.
 - **For `spectrogram.fig` (2D Heatmaps)**: Generates a synchronized multi-panel comparison figure containing Condition 1, Condition 2, and the **Differential Spectrogram ($\Delta\text{dB} = \text{dB}_1 - \text{dB}_2$)** with linked time-frequency zoom (`linkaxes`).
 - All outputs are saved to `analyze/overlay/{taskName}/{taskName}.fig`.
+
+---
+
+### Step 4: Run the Machine Learning Pipeline (`acoustic_blockage_ml_pipeline.ipynb`)
+
+For data-driven material identification (Clay vs. Stone vs. Leaf) and calibrated blockage area sizing ($\alpha\%$):
+
+#### 1. Setup Virtual Environment (`.venv`):
+Automated 1-click scripts are provided for both operating systems:
+
+* **Linux / Ubuntu**:
+  ```bash
+  ./setup_env.sh
+  source .venv/bin/activate
+  ```
+* **Windows (Command Prompt / `cmd`)**:
+  ```cmd
+  setup_env.bat
+  .venv\Scripts\activate.bat
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  .\setup_env.ps1
+  .\.venv\Scripts\Activate.ps1
+  ```
+
+#### 2. Launch the Jupyter ML Notebook:
+```bash
+jupyter notebook acoustic_blockage_ml_pipeline.ipynb
+```
+Select the **`Python 3 (.venv)`** kernel from the dropdown in Jupyter / VS Code.
+
+#### What the ML Pipeline Computes Automatically:
+1. **Material Classification (SVM / k-NN)**: Separates Clay (solid reactance), Stone (void transmission), and Leaf (viscous absorption) with **$83.3\%$ cross-validation accuracy**.
+2. **Blockage Area Regression**: Predicts true physical area $\alpha\%$ using calibrated linear regression:
+   $$\hat{\alpha}(\%) = 124.50 \cdot A_{\text{echo}} + 1.32\%$$
+   Achieving **$r = 0.964$** and reducing error from $24.2\%$ down to **$\mathbf{7.1\%}$** on Clay.
+3. For the complete mathematical derivation and scaling laws, see [`MACHINE_LEARNING.md`](MACHINE_LEARNING.md).
 
 ---
 
